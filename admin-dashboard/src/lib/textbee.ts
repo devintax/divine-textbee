@@ -208,3 +208,31 @@ export async function revokeApiKey(id: string): Promise<void> {
     throw new Error(err.error || `Revoke key failed: ${res.status}`)
   }
 }
+
+// ── TextBee API keys (for device pairing) ─────────────────────────────────────────────────
+
+export async function generateTextBeeApiKey(): Promise<string> {
+  const res = await fetch(`${TEXTBEE_API_URL}/auth/api-keys`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({}),
+  })
+  const json = await res.json()
+  if (!res.ok) {
+    throw new Error(json.error || json.message || `Generate key failed: ${res.status}`)
+  }
+  return json.data.apiKey as string
+}
+
+// ── Device management ──────────────────────────────────────────────────────────────────────
+
+export async function deleteTextBeeDevice(deviceId: string): Promise<void> {
+  const res = await fetch(`${TEXTBEE_API_URL}/gateway/devices/${deviceId}`, {
+    method: 'DELETE',
+    headers: headers(),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Delete device failed: ${res.status}`)
+  }
+}

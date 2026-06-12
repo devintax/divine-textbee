@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import LogoutButton from '@/components/LogoutButton'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -43,15 +44,4 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
   )
 }
 
-function LogoutButton() {
-  return (
-    <form action="/api/auth/logout" method="POST">
-      <button
-        type="submit"
-        className="block w-full text-left px-3 py-2 rounded text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-      >
-        Sign out
-      </button>
-    </form>
-  )
-}
+

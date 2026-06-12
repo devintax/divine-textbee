@@ -1,0 +1,7 @@
+tunnel: 5302c904-e640-40c5-b1f1-5f20b7cce48b
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: textbee.dfgworld.net
+    service: http://admin-dashboard:4000
+  - service: http_status:404

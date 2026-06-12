@@ -1,0 +1,39 @@
+# Environment files (contain secrets — never commit)
+.env
+api/.env
+web/.env
+admin-dashboard/.env
+gateway/.env
+
+# Node.js
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+
+# NestJS
+dist/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (local data — Coolify manages these)
+/mongodb_data/
+/redis_data/
+
+# Logs
+*.log
+
+# Misc
+.cache/
+tmp/

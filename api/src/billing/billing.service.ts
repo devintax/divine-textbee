@@ -1,0 +1,837 @@
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+} from '@nestjs/common'
+import { InjectModel } from '@nestjs/mongoose'
+import { Model, Types } from 'mongoose'
+import { Plan, PlanDocument } from './schemas/plan.schema'
+import {
+  Subscription,
+  SubscriptionDocument,
+} from './schemas/subscription.schema'
+import { Polar } from '@polar-sh/sdk'
+import { User, UserDocument } from '../users/schemas/user.schema'
+import { CheckoutResponseDTO, PlanDTO } from './billing.dto'
+import { SMSDocument } from '../gateway/schemas/sms.schema'
+import { SMS } from '../gateway/schemas/sms.schema'
+import { validateEvent } from '@polar-sh/sdk/webhooks'
+import {
+  PolarWebhookPayload,
+  PolarWebhookPayloadDocument,
+} from './schemas/polar-webhook-payload.schema'
+import {
+  CheckoutSession,
+  CheckoutSessionDocument,
+} from './schemas/checkout-session.schema'
+import {
+  BillingNotificationsService,
+  BillingNotificationType,
+} from './billing-notifications.service'
+
+@Injectable()
+export class BillingService {
+  private polarApi
+
+  constructor(
+    @InjectModel(Plan.name) private planModel: Model<PlanDocument>,
+    @InjectModel(Subscription.name)
+    private subscriptionModel: Model<SubscriptionDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(SMS.name) private smsModel: Model<SMSDocument>,
+    @InjectModel(PolarWebhookPayload.name)
+    private polarWebhookPayloadModel: Model<PolarWebhookPayloadDocument>,
+    @InjectModel(CheckoutSession.name)
+    private checkoutSessionModel: Model<CheckoutSessionDocument>,
+    private readonly billingNotifications: BillingNotificationsService,
+  ) {
+    this.polarApi = new Polar({
+      accessToken: process.env.POLAR_ACCESS_TOKEN ?? '',
+      server:
+        process.env.POLAR_SERVER === 'production' ? 'production' : 'sandbox',
+    })
+  }
+
+  async getPlans(): Promise<PlanDTO[]> {
+    return this.planModel.find({
+      isActive: true,
+    })
+  }
+
+  async getCurrentSubscription(user: any) {
+    const subscription = await this.subscriptionModel
+      .findOne({
+        user: user._id,
+        isActive: true,
+      })
+      .populate('plan')
+
+    const processedSmsToday = await this.smsModel.countDocuments({
+      user: user._id,
+      createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+    })
+
+    const processedSmsLastMonth = await this.smsModel.countDocuments({
+      user: user._id,
+      createdAt: {
+        $gte: new Date(new Date().setMonth(new Date().getMonth() - 1)),
+      },
+    })
+
+    if (subscription) {
+      const plan = subscription.plan
+      const effectiveLimits = this.getEffectiveLimits(subscription, plan)
+
+      try {
+        if (effectiveLimits.dailyLimit && effectiveLimits.dailyLimit > 0) {
+          const dailyPct = processedSmsToday / effectiveLimits.dailyLimit
+          if (
+            dailyPct >= 0.8 &&
+            processedSmsToday < effectiveLimits.dailyLimit
+          ) {
+            this.billingNotifications
+              .notifyOnce({
+                userId: user._id,
+                type: BillingNotificationType.DAILY_LIMIT_APPROACHING,
+                title: "You're nearing today's SMS limit",
+                message: `You've used ${Math.round(dailyPct * 100)}% of today's SMS allocation. ${effectiveLimits.dailyLimit - processedSmsToday} messages remain for today. Consider upgrading your plan or scheduling sends for later.`,
+                meta: {
+                  processedSmsToday,
+                  dailyLimit: effectiveLimits.dailyLimit,
+                },
+                sendEmail: true,
+              })
+              .catch(() => {})
+          }
+        }
+        if (effectiveLimits.monthlyLimit && effectiveLimits.monthlyLimit > 0) {
+          const monthlyPct =
+            processedSmsLastMonth / effectiveLimits.monthlyLimit
+          if (
+            monthlyPct >= 0.8 &&
+            processedSmsLastMonth < effectiveLimits.monthlyLimit
+          ) {
+            this.billingNotifications
+              .notifyOnce({
+                userId: user._id,
+                type: BillingNotificationType.MONTHLY_LIMIT_APPROACHING,
+                title: "You're nearing this month's SMS limit",
+                message: `You've used ${Math.round(monthlyPct * 100)}% of this month's SMS allocation. ${effectiveLimits.monthlyLimit - processedSmsLastMonth} messages remain this billing period. Upgrade to increase your monthly capacity.`,
+                meta: {
+                  processedSmsLastMonth,
+                  monthlyLimit: effectiveLimits.monthlyLimit,
+                },
+                sendEmail: true,
+              })
+              .catch(() => {})
+          }
+        }
+      } catch {}
+      return {
+        ...subscription.toObject(),
+        usage: {
+          processedSmsToday,
+          processedSmsLastMonth,
+          dailyLimit: effectiveLimits.dailyLimit,
+          monthlyLimit: effectiveLimits.monthlyLimit,
+          deviceLimit: effectiveLimits.deviceLimit,
+          dailyRemaining:
+            effectiveLimits.dailyLimit === -1
+              ? -1
+              : effectiveLimits.dailyLimit - processedSmsToday,
+          monthlyRemaining:
+            effectiveLimits.monthlyLimit === -1
+              ? -1
+              : effectiveLimits.monthlyLimit - processedSmsLastMonth,
+          dailyUsagePercentage:
+            effectiveLimits.dailyLimit === -1
+              ? 0
+              : Math.round(
+                  (processedSmsToday / effectiveLimits.dailyLimit) * 100,
+                ),
+          monthlyUsagePercentage:
+            effectiveLimits.monthlyLimit === -1
+              ? 0
+              : Math.round(
+                  (processedSmsLastMonth / effectiveLimits.monthlyLimit) * 100,
+                ),
+        },
+      }
+    }
+
+    const plan = await this.planModel.findOne({ name: 'free' })
+    const effectiveLimits = this.getEffectiveLimits(null, plan)
+
+    // fire-and-forget: approaching threshold notifications
+    try {
+      if (effectiveLimits.dailyLimit && effectiveLimits.dailyLimit > 0) {
+        const dailyPct = processedSmsToday / effectiveLimits.dailyLimit
+        if (dailyPct >= 0.8 && processedSmsToday < effectiveLimits.dailyLimit) {
+          this.billingNotifications
+            .notifyOnce({
+              userId: user._id,
+              type: BillingNotificationType.DAILY_LIMIT_APPROACHING,
+              title: "You're nearing today's SMS limit",
+              message: `You've used ${Math.round(dailyPct * 100)}% of today's SMS allocation. ${effectiveLimits.dailyLimit - processedSmsToday} messages remain for today. Consider upgrading your plan or scheduling sends for later.`,
+              meta: {
+                processedSmsToday,
+                dailyLimit: effectiveLimits.dailyLimit,
+              },
+              sendEmail: true,
+            })
+            .catch(() => {})
+        }
+      }
+      if (effectiveLimits.monthlyLimit && effectiveLimits.monthlyLimit > 0) {
+        const monthlyPct = processedSmsLastMonth / effectiveLimits.monthlyLimit
+        if (
+          monthlyPct >= 0.8 &&
+          processedSmsLastMonth < effectiveLimits.monthlyLimit
+        ) {
+          this.billingNotifications
+            .notifyOnce({
+              userId: user._id,
+              type: BillingNotificationType.MONTHLY_LIMIT_APPROACHING,
+              title: "You're nearing this month's SMS limit",
+              message: `You've used ${Math.round(monthlyPct * 100)}% of this month's SMS allocation. ${effectiveLimits.monthlyLimit - processedSmsLastMonth} messages remain this billing period. Upgrade to increase your monthly capacity.`,
+              meta: {
+                processedSmsLastMonth,
+                monthlyLimit: effectiveLimits.monthlyLimit,
+              },
+              sendEmail: true,
+            })
+            .catch(() => {})
+        }
+      }
+    } catch {}
+
+    return {
+      plan,
+      isActive: true,
+      usage: {
+        processedSmsToday,
+        processedSmsLastMonth,
+        dailyLimit: effectiveLimits.dailyLimit,
+        monthlyLimit: effectiveLimits.monthlyLimit,
+        deviceLimit: effectiveLimits.deviceLimit,
+        dailyRemaining:
+          effectiveLimits.dailyLimit === -1
+            ? -1
+            : effectiveLimits.dailyLimit - processedSmsToday,
+        monthlyRemaining:
+          effectiveLimits.monthlyLimit === -1
+            ? -1
+            : effectiveLimits.monthlyLimit - processedSmsLastMonth,
+        dailyUsagePercentage:
+          effectiveLimits.dailyLimit === -1
+            ? 0
+            : Math.round(
+                (processedSmsToday / effectiveLimits.dailyLimit) * 100,
+              ),
+        monthlyUsagePercentage:
+          effectiveLimits.monthlyLimit === -1
+            ? 0
+            : Math.round(
+                (processedSmsLastMonth / effectiveLimits.monthlyLimit) * 100,
+              ),
+      },
+    }
+  }
+
+  async getCheckoutUrl({
+    user,
+    payload,
+    req,
+  }: {
+    user: any
+    payload: any
+    req: any
+  }): Promise<CheckoutResponseDTO> {
+    const billingInterval =
+      payload.billingInterval === 'yearly' ? 'yearly' : 'monthly'
+
+    const existingCheckoutSession = await this.checkoutSessionModel.findOne({
+      user: user._id,
+      expiresAt: { $gt: new Date() },
+      isCompleted: { $ne: true },
+      isAbandoned: { $ne: true },
+    })
+
+    // Only reuse a cached checkout created for the same plan and billing
+    // interval, otherwise Polar would preselect the wrong product
+    if (
+      existingCheckoutSession &&
+      existingCheckoutSession.planName === payload.planName &&
+      existingCheckoutSession.billingInterval === billingInterval
+    ) {
+      return { redirectUrl: existingCheckoutSession.checkoutUrl }
+    }
+
+    const selectedPlan = await this.planModel.findOne({
+      name: payload.planName,
+    })
+
+    const currentSubscription = await this.getCurrentSubscription(user)
+    if ((currentSubscription?.plan as Plan)?.name ===  payload.planName) {
+      throw new BadRequestException({
+        message: `You are already on ${payload.planName} plan, please contact billing@textbee.dev to get a custom plan`,
+        code: 'ALREADY_ON_PLAN',
+      })
+    }
+
+    if (
+      !selectedPlan?.polarMonthlyProductId &&
+      !selectedPlan?.polarYearlyProductId
+    ) {
+      throw new BadRequestException('Plan cannot be purchased')
+    }
+
+    // const product = await this.polarApi.products.get(selectedPlan.polarProductId)
+
+    const discountId =
+      payload.discountId ?? process.env.POLAR_DEFAULT_DISCOUNT_ID
+
+    try {
+      // Polar preselects the first product in the list, so order it by the
+      // billing interval the user chose
+      const orderedProductIds = (
+        billingInterval === 'yearly'
+          ? [selectedPlan.polarYearlyProductId, selectedPlan.polarMonthlyProductId]
+          : [selectedPlan.polarMonthlyProductId, selectedPlan.polarYearlyProductId]
+      ).filter(Boolean)
+
+      const checkoutOptions: any = {
+        // productId: selectedPlan.polarProductId, // deprecated
+        products: orderedProductIds,
+        successUrl: `${process.env.FRONTEND_URL}/dashboard/account?checkout-success=1&checkout_id={CHECKOUT_ID}`,
+        cancelUrl: `${process.env.FRONTEND_URL}/dashboard/account?checkout-cancel=1&checkout_id={CHECKOUT_ID}`,
+        customerEmail: user.email,
+        customerName: user.name,
+        customerIpAddress: req.ip,
+        metadata: {
+          userId: user._id?.toString(),
+        },
+        externalCustomerId: user._id?.toString(),
+      }
+
+      try {
+        let discount = null;
+        if (discountId) {
+          discount = await this.polarApi.discounts.get({
+            id: discountId,
+          })
+          if (discount) {
+            checkoutOptions.discountId = discount.id
+          }
+        }
+      } catch (error) {
+        console.error('failed to get discount', error)
+      }
+
+      const checkout = await this.polarApi.checkouts.create(checkoutOptions)
+
+      this.checkoutSessionModel
+        .updateOne(
+          {
+            user: user._id,
+          },
+          {
+            user: user._id,
+            checkoutSessionId: checkout.id,
+            checkoutUrl: checkout.url,
+            planName: payload.planName,
+            billingInterval,
+            expiresAt: new Date(checkout.expiresAt),
+            payload: checkout,
+          },
+          { upsert: true },
+        )
+        .catch((error) => {
+          console.error(error)
+        })
+
+      return { redirectUrl: checkout.url }
+    } catch (error) {
+      console.error(error)
+      throw new Error('Failed to create checkout')
+    }
+  }
+
+  async getActiveSubscription(userId: string) {
+    const user = await this.userModel.findById(new Types.ObjectId(userId))
+    const plans = await this.planModel.find()
+
+    const customPlans = plans.filter((plan) => plan.name?.startsWith('custom'))
+    const scalePlan = plans.find((plan) => plan.name === 'scale')
+    const proPlan = plans.find((plan) => plan.name === 'pro')
+    const freePlan = plans.find((plan) => plan.name === 'free')
+
+    const customPlanSubscription = await this.subscriptionModel.findOne({
+      user: user._id,
+      plan: { $in: customPlans.map((plan) => plan._id) },
+      isActive: true,
+    })
+
+    if (customPlanSubscription) {
+      return customPlanSubscription.populate('plan')
+    }
+
+    if (scalePlan) {
+      const scalePlanSubscription = await this.subscriptionModel.findOne({
+        user: user._id,
+        plan: scalePlan._id,
+        isActive: true,
+      })
+
+      if (scalePlanSubscription) {
+        return scalePlanSubscription.populate('plan')
+      }
+    }
+
+    const proPlanSubscription = await this.subscriptionModel.findOne({
+      user: user._id,
+      plan: proPlan._id,
+      isActive: true,
+    })
+
+    if (proPlanSubscription) {
+      return proPlanSubscription.populate('plan')
+    }
+
+    const freePlanSubscription = await this.subscriptionModel.findOne({
+      user: user._id,
+      plan: freePlan._id,
+      isActive: true,
+    })
+
+    if (freePlanSubscription) {
+      return freePlanSubscription.populate('plan')
+    }
+
+    // create a new free plan subscription
+    // const newFreePlanSubscription = await this.subscriptionModel.create({
+    //   user: user._id,
+    //   plan: freePlan._id,
+    //   isActive: true,
+    //   startDate: new Date(),
+    // })
+
+    // return newFreePlanSubscription.populate('plan')
+    return {
+      user,
+      plan: freePlan,
+      isActive: true,
+      status: 'active',
+      amount: 0,
+    }
+  }
+
+  private getEffectiveLimits(subscription: any, plan: any) {
+    if (!subscription) {
+      return {
+        dailyLimit: plan.dailyLimit,
+        monthlyLimit: plan.monthlyLimit,
+        bulkSendLimit: plan.bulkSendLimit,
+        deviceLimit: plan.deviceLimit ?? -1,
+      }
+    }
+
+    return {
+      dailyLimit: subscription.customDailyLimit ?? plan.dailyLimit,
+      monthlyLimit: subscription.customMonthlyLimit ?? plan.monthlyLimit,
+      bulkSendLimit: subscription.customBulkSendLimit ?? plan.bulkSendLimit,
+      deviceLimit:
+        subscription.customDeviceLimit ?? plan.deviceLimit ?? -1,
+    }
+  }
+
+  async getUserLimits(userId: string) {
+    const subscription = await this.subscriptionModel
+      .findOne({ user: new Types.ObjectId(userId), isActive: true })
+      .populate('plan')
+
+    if (!subscription) {
+      // Default to free plan limits
+      const freePlan = await this.planModel.findOne({ name: 'free' })
+      return this.getEffectiveLimits(null, freePlan)
+    }
+
+    // Use custom limits if set, otherwise fall back to plan limits
+    return this.getEffectiveLimits(subscription, subscription.plan)
+  }
+
+  async notifyDeviceLimitReached(
+    userId: Types.ObjectId | string,
+    deviceLimit: number,
+    activeDeviceCount: number,
+  ) {
+    await this.billingNotifications.notifyOnce({
+      userId,
+      type: BillingNotificationType.DEVICE_LIMIT_REACHED,
+      title: 'Active device limit reached',
+      message: `Your plan allows up to ${deviceLimit} active device(s) and you have ${activeDeviceCount}. Disable or delete another device, or upgrade your plan to connect more devices.`,
+      meta: {
+        deviceLimit,
+        activeDeviceCount,
+      },
+      sendEmail: true,
+    })
+  }
+
+  async switchPlan({
+    userId,
+    newPlanName,
+    newPlanPolarProductId,
+    currentPeriodStart,
+    currentPeriodEnd,
+    subscriptionStartDate,
+    subscriptionEndDate,
+    status,
+    amount,
+    currency,
+    recurringInterval,
+  }: {
+    userId: string
+    newPlanName?: string
+    newPlanPolarProductId?: string
+    createdAt?: Date
+    currentPeriodStart?: Date
+    currentPeriodEnd?: Date
+    subscriptionStartDate?: Date
+    subscriptionEndDate?: Date
+    status?: string
+    amount?: number
+    currency?: string
+    recurringInterval?: string
+  }) {
+    console.log(`Switching plan for user: ${userId}`)
+
+    // Convert userId to ObjectId
+    const userObjectId = new Types.ObjectId(userId)
+
+    let plan: PlanDocument
+    if (newPlanPolarProductId) {
+      plan = await this.planModel.findOne({
+        $or: [
+          // { polarProductId: newPlanPolarProductId }, // deprecated
+          { polarMonthlyProductId: newPlanPolarProductId },
+          { polarYearlyProductId: newPlanPolarProductId },
+        ],
+      })
+    } else if (newPlanName) {
+      plan = await this.planModel.findOne({ name: newPlanName })
+    }
+
+    if (!plan) {
+      throw new Error('Plan not found')
+    }
+
+    console.log(`Found plan: ${plan.name}`)
+
+    // Deactivate current active subscriptions
+    const result = await this.subscriptionModel.updateMany(
+      { user: userObjectId, plan: { $ne: plan._id }, isActive: true },
+      { isActive: false, subscriptionEndDate: new Date() },
+    )
+    console.log(`Deactivated subscriptions: ${result.modifiedCount}`)
+
+    // Create or update the new subscription
+    const updateResult = await this.subscriptionModel.updateOne(
+      { user: userObjectId, plan: plan._id },
+      {
+        isActive: true,
+        currentPeriodStart,
+        currentPeriodEnd,
+        subscriptionStartDate,
+        subscriptionEndDate,
+        status,
+        amount,
+        currency,
+        recurringInterval,
+      },
+      { upsert: true },
+    )
+    console.log(
+      `Updated or created subscription: ${updateResult.upsertedCount > 0 ? 'Created' : 'Updated'}`,
+    )
+
+    return { success: true, plan: plan.name }
+  }
+
+  async canPerformAction(
+    userId: string,
+    action: 'send_sms' | 'receive_sms' | 'bulk_send_sms',
+    value: number,
+  ) {
+    try {
+      const user = await this.userModel.findById(userId)
+      if (user.isBanned) {
+        throw new HttpException(
+          {
+            message: 'Sorry, we cannot process your request at the moment',
+          },
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        )
+      }
+
+      if (user.emailVerifiedAt === null) {
+        console.warn('canPerformAction: User email not verified')
+        throw new HttpException(
+          {
+            message: 'Please verify your email to continue',
+          },
+          HttpStatus.BAD_REQUEST,
+        )
+      }
+
+      let plan: PlanDocument
+      const subscription = await this.subscriptionModel.findOne({
+        user: user._id,
+        isActive: true,
+      })
+
+      if (!subscription) {
+        plan = await this.planModel.findOne({ name: 'free' })
+      } else {
+        plan = await this.planModel.findById(subscription.plan)
+      }
+
+      const effectiveLimits = this.getEffectiveLimits(subscription, plan)
+
+      if (plan.name?.startsWith('custom')) {
+        // For custom plans, check if custom limits are set to unlimited (-1)
+        if (
+          effectiveLimits.dailyLimit === -1 &&
+          effectiveLimits.monthlyLimit === -1 &&
+          effectiveLimits.bulkSendLimit === -1
+        ) {
+          return true
+        }
+        // Otherwise, continue with limit checks using effective limits
+      }
+
+      let hasReachedLimit = false
+      let message = ''
+
+      const processedSmsToday = await this.smsModel.countDocuments({
+        user: user._id,
+        createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+      })
+      const processedSmsLastMonth = await this.smsModel.countDocuments({
+        user: user._id,
+        createdAt: {
+          $gte: new Date(new Date().setMonth(new Date().getMonth() - 1)),
+        },
+      })
+
+      let dailyExceeded = false
+      let monthlyExceeded = false
+      let bulkExceeded = false
+
+      if (['send_sms', 'receive_sms', 'bulk_send_sms'].includes(action)) {
+        const dailyFinite = effectiveLimits.dailyLimit !== -1
+        const monthlyFinite = effectiveLimits.monthlyLimit !== -1
+
+        // exceeded checks
+        dailyExceeded =
+          dailyFinite && processedSmsToday + value > effectiveLimits.dailyLimit
+        monthlyExceeded =
+          monthlyFinite &&
+          processedSmsLastMonth + value > effectiveLimits.monthlyLimit
+        bulkExceeded =
+          effectiveLimits.bulkSendLimit !== -1 &&
+          value > effectiveLimits.bulkSendLimit
+
+        if (dailyExceeded) {
+          hasReachedLimit = true
+          message = `Daily SMS limit reached — you've used your full daily allocation. ${Math.max(0, effectiveLimits.dailyLimit - processedSmsToday)} messages remain for today. Upgrade to increase your daily capacity or try again tomorrow.`
+        }
+
+        if (monthlyExceeded) {
+          hasReachedLimit = true
+          message = `Monthly SMS limit reached — you've used this billing period's allocation. Upgrade to continue sending immediately, or wait for the next billing period.`
+        }
+
+        if (bulkExceeded) {
+          hasReachedLimit = true
+          message = `Bulk send limit exceeded — your plan allows up to ${effectiveLimits.bulkSendLimit} messages per batch. Split your send into smaller batches or upgrade your plan.`
+        }
+      }
+
+      if (hasReachedLimit) {
+        console.warn('canPerformAction: hasReachedLimit')
+        console.warn(
+          JSON.stringify({
+            userId,
+            userEmail: user.email,
+            userName: user.name,
+            action,
+            value,
+            message,
+            hasReachedLimit: true,
+            dailyLimit: effectiveLimits.dailyLimit,
+            dailyRemaining: effectiveLimits.dailyLimit - processedSmsToday,
+            monthlyRemaining:
+              effectiveLimits.monthlyLimit - processedSmsLastMonth,
+            bulkSendLimit: effectiveLimits.bulkSendLimit,
+            monthlyLimit: effectiveLimits.monthlyLimit,
+          }),
+        )
+
+        let type: BillingNotificationType
+        let titleForEmail = ''
+        if (dailyExceeded) {
+          type = BillingNotificationType.DAILY_LIMIT_REACHED
+          titleForEmail = 'Daily SMS limit reached'
+        } else if (monthlyExceeded) {
+          type = BillingNotificationType.MONTHLY_LIMIT_REACHED
+          titleForEmail = 'Monthly SMS limit reached'
+        } else if (bulkExceeded) {
+          type = BillingNotificationType.BULK_SMS_LIMIT_REACHED
+          titleForEmail = 'Bulk send limit exceeded'
+        }
+        if (type) {
+          await this.billingNotifications.notifyOnce({
+            userId: user._id,
+            type,
+            title: titleForEmail || 'Usage limit notice',
+            message,
+            meta: {
+              processedSmsToday,
+              processedSmsLastMonth,
+              attempted: value,
+              dailyLimit: effectiveLimits.dailyLimit,
+              monthlyLimit: effectiveLimits.monthlyLimit,
+              bulkSendLimit: effectiveLimits.bulkSendLimit,
+            },
+            sendEmail: true,
+          })
+        }
+
+        // if plan is not free and monthly limit is exceeded, give them 80% more monthly limit
+        if (
+          plan.name !== 'free' &&
+          monthlyExceeded &&
+          !dailyExceeded &&
+          !bulkExceeded
+        ) {
+          const extendedMonthlyLimit = Math.floor(
+            effectiveLimits.monthlyLimit * 1.8,
+          )
+          const exceedsExtended =
+            processedSmsLastMonth + value > extendedMonthlyLimit
+          if (!exceedsExtended) {
+            return true
+          }
+        }
+        throw new HttpException(
+          {
+            message: message,
+            hasReachedLimit: true,
+            dailyLimit: effectiveLimits.dailyLimit,
+            dailyRemaining: effectiveLimits.dailyLimit - processedSmsToday,
+            monthlyRemaining:
+              effectiveLimits.monthlyLimit - processedSmsLastMonth,
+            bulkSendLimit: effectiveLimits.bulkSendLimit,
+            monthlyLimit: effectiveLimits.monthlyLimit,
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        )
+      }
+
+      return true
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error
+      }
+      console.error('canPerformAction: Exception in canPerformAction')
+      console.error(JSON.stringify(error))
+      return true
+    }
+  }
+
+  async getUsage(userId: string) {
+    const subscription = await this.subscriptionModel.findOne({
+      user: new Types.ObjectId(userId),
+      isActive: true,
+    })
+
+    let plan: PlanDocument
+    if (!subscription) {
+      plan = await this.planModel.findOne({ name: 'free' })
+    } else {
+      plan = await this.planModel.findById(subscription.plan)
+    }
+
+    const effectiveLimits = this.getEffectiveLimits(subscription, plan)
+
+    const processedSmsToday = await this.smsModel.countDocuments({
+      user: new Types.ObjectId(userId),
+      createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+    })
+
+    const processedSmsLastMonth = await this.smsModel.countDocuments({
+      user: new Types.ObjectId(userId),
+      createdAt: {
+        $gte: new Date(new Date().setMonth(new Date().getMonth() - 1)),
+      },
+    })
+
+    return {
+      processedSmsToday,
+      processedSmsLastMonth,
+      dailyLimit: effectiveLimits.dailyLimit,
+      monthlyLimit: effectiveLimits.monthlyLimit,
+      bulkSendLimit: effectiveLimits.bulkSendLimit,
+      deviceLimit: effectiveLimits.deviceLimit,
+      dailyRemaining:
+        effectiveLimits.dailyLimit === -1
+          ? -1
+          : effectiveLimits.dailyLimit - processedSmsToday,
+      monthlyRemaining:
+        effectiveLimits.monthlyLimit === -1
+          ? -1
+          : effectiveLimits.monthlyLimit - processedSmsLastMonth,
+    }
+  }
+
+  async validatePolarWebhookPayload(payload: any, headers: any) {
+    const webhookHeaders = {
+      'webhook-id': headers['webhook-id'] ?? '',
+      'webhook-timestamp': headers['webhook-timestamp'] ?? '',
+      'webhook-signature': headers['webhook-signature'] ?? '',
+    }
+    try {
+      const webhookPayload = validateEvent(
+        payload,
+        webhookHeaders,
+        process.env.POLAR_WEBHOOK_SECRET,
+      )
+      return webhookPayload
+    } catch (error) {
+      console.log('failed to validate polar webhook payload')
+      console.error(error)
+      throw new Error('Invalid webhook payload')
+    }
+  }
+
+  async storePolarWebhookPayload(payload: any) {
+    const userId = payload.data?.metadata?.userId || payload.data?.userId
+    const eventType = payload.type
+    const name = payload.data?.customer?.name || payload.data?.customerName
+    const email = payload.data?.customer?.email || payload.data?.customerEmail
+    const productId = payload.data?.product?.id || payload.data?.productId
+    const productName = payload.data?.product?.name || payload.data?.productName
+
+    await this.polarWebhookPayloadModel.create({
+      userId,
+      eventType,
+      name,
+      email,
+      payload,
+      productId,
+      productName,
+    })
+  }
+}

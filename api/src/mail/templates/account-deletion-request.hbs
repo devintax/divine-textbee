@@ -1,0 +1,43 @@
+<html lang='en'>
+  <head>
+    <meta charset='UTF-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <title>Account Deletion Request</title>
+    <style>
+      body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+      h1 { color: #dc2626; }
+      .notice { background: #fee2e2; border-left: 4px solid #dc2626; padding: 15px; margin: 15px 0; }
+      .cancel { background: #e0f2fe; border: 2px solid #0284c7; padding: 15px; margin: 20px 0; text-align: center; }
+      .footer { text-align: center; font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; }
+    </style>
+  </head>
+  <body>
+    <h1>Account Deletion Request</h1>
+
+    <p>Hello {{name}},</p>
+
+    <p>We have received your request to delete your TextBee account. We're sorry to see you go.</p>
+
+    <div class='notice'>
+      <p><strong>Important:</strong> Your account has been marked for deletion and will be processed within 7 days. During this period:</p>
+      <ul>
+        <li>You can still log in and access your account until the deletion is completed</li>
+        <li>After the deletion is complete, all your data will be permanently removed</li>
+        <li>This action cannot be undone once processed</li>
+      </ul>
+    </div>
+
+    <p><strong>Reason for deletion:</strong> {{#if message}}{{message}}{{else}}No reason provided{{/if}}</p>
+
+    <p><strong>Account:</strong> {{name}} ({{email}})</p>
+
+    <div class='cancel'>
+      <h3 style='color: #0284c7; margin-top: 0;'>Changed Your Mind?</h3>
+      <p>If you didn't request this deletion or want to keep your account, simply reply to this email and we'll immediately stop the deletion process.</p>
+    </div>
+
+    <div class='footer'>
+      <p>&copy; {{currentYear}} textbee.dev.</p>
+    </div>
+  </body>
+</html>

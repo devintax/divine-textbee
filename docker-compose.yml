@@ -1,0 +1,168 @@
+services:
+  # MongoDB database
+  textbee-db:
+    container_name: textbee-db
+    # Use mongo:7.0+ on Coolify (production VPS). mongo:4.4 used here for WSL2/AVX-less hosts.
+    image: mongo:4.4
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER:-adminUser}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASS}
+      - MONGO_INITDB_DATABASE=textbee
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "${MONGO_PORT:-27018}:27017"
+    networks:
+      - textbee-network
+    # Note: For mongo:7.0+, use ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # NestJS API
+  textbee-api:
+    container_name: textbee-api
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3001}:3001"
+    environment:
+      - PORT=3001
+      - NODE_ENV=${NODE_ENV:-development}
+      - MONGO_URI=mongodb://${MONGO_ROOT_USER:-adminUser}:${MONGO_ROOT_PASS}@textbee-db:27017/textbee?authSource=admin
+      - MONGO_ROOT_USER=${MONGO_ROOT_USER:-adminUser}
+      - MONGO_ROOT_PASS=${MONGO_ROOT_PASS}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-60d}
+      - FRONTEND_URL=${APP_URL:-http://localhost:3000}
+      - REDIS_URL=redis://textbee-redis:6379
+      - USE_SMS_QUEUE=${USE_SMS_QUEUE:-false}
+      - CLOUDFLARE_TURNSTILE_SECRET_KEY=${CLOUDFLARE_TURNSTILE_SECRET_KEY:-}
+    depends_on:
+      textbee-db:
+        condition: service_healthy
+    networks:
+      - textbee-network
+
+  # Next.js Web Dashboard
+  textbee-web:
+    container_name: textbee-web
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_SITE_URL=${APP_URL:-http://localhost:3000}
+        - NEXT_PUBLIC_API_BASE_URL=${APP_URL:-http://localhost:3000}/api/v1
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - NEXT_PUBLIC_SITE_URL=${APP_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_API_BASE_URL=${APP_URL:-http://localhost:3000}/api/v1
+      - NEXT_PUBLIC_LATEST_APP_VERSION_CODE=${NEXT_PUBLIC_LATEST_APP_VERSION_CODE:-17}
+      - AUTH_SECRET=${AUTH_SECRET}
+      - DATABASE_URL=mongodb://${MONGO_ROOT_USER:-adminUser}:${MONGO_ROOT_PASS}@textbee-db:27017/textbee?authSource=admin
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+    depends_on:
+      - textbee-api
+    networks:
+      - textbee-network
+
+  # Redis (optional, for SMS queue)
+  textbee-redis:
+    container_name: textbee-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - textbee-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Admin Dashboard (Next.js operations console)
+  admin-dashboard:
+    container_name: admin-dashboard
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_DASHBOARD_PORT:-4000}:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=${NODE_ENV:-development}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - TEXTBEE_API_URL=${TEXTBEE_API_URL:-http://textbee-api:3001/api/v1}
+      - TEXTBEE_API_KEY=${TEXTBEE_API_KEY}
+      - GATEWAY_ADMIN_URL=${GATEWAY_ADMIN_URL:-http://textbee-gateway:4001}
+      - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN}
+    depends_on:
+      - textbee-api
+    networks:
+      - textbee-network
+
+  # SMS Gateway Service (Twilio-shaped internal API)
+  textbee-gateway:
+    container_name: textbee-gateway
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-4001}:4001"
+    environment:
+      - PORT=4001
+      - MONGO_URI=mongodb://${MONGO_ROOT_USER:-adminUser}:${MONGO_ROOT_PASS}@textbee-db:27017/textbee_gateway?authSource=admin
+      - TEXTBEE_API_URL=${TEXTBEE_API_URL:-http://textbee-api:3001/api/v1}
+      - TEXTBEE_API_KEY=${TEXTBEE_API_KEY}
+      - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN}
+    depends_on:
+      textbee-db:
+        condition: service_healthy
+    networks:
+      - textbee-network
+
+  # Mongo Express (optional DB admin UI)
+  mongo-express:
+    container_name: textbee-mongo-express
+    image: mongo-express:1.0
+    restart: unless-stopped
+    ports:
+      - "${MONGO_EXPRESS_PORT:-8081}:8081"
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=${MONGO_ROOT_USER:-adminUser}
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=${MONGO_ROOT_PASS}
+      - ME_CONFIG_MONGODB_SERVER=textbee-db
+    depends_on:
+      textbee-db:
+        condition: service_healthy
+    networks:
+      - textbee-network
+    profiles:
+      - db-admin
+
+networks:
+  textbee-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  redis_data:

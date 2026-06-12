@@ -1,9 +1,13 @@
 # Environment files (contain secrets — never commit)
 .env
+.env.escaped
 api/.env
 web/.env
 admin-dashboard/.env
 gateway/.env
+
+# Cloudflare credentials (contain API tokens)
+cloudflared/credentials.json
 
 # Node.js
 node_modules/

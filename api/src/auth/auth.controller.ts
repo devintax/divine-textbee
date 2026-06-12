@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  HttpException,
   HttpStatus,
   Param,
   Patch,
@@ -13,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger'
+import { Throttle } from '@nestjs/throttler'
 import {
   LoginInputDTO,
   RegisterInputDTO,
@@ -35,6 +37,7 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Login' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 900000 } })
   @Post('/login')
   async login(@Body() input: LoginInputDTO) {
     const data = await this.authService.login(input)
@@ -43,6 +46,7 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Login With Google' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 900000 } })
   @Post('/google-login')
   async googleLogin(@Body() input: any) {
     const data = await this.authService.loginWithGoogle(input.idToken)
@@ -50,8 +54,17 @@ export class AuthController {
   }
 
   @ApiOperation({ summary: 'Register' })
+  @HttpCode(HttpStatus.OK)
   @Post('/register')
   async register(@Body() input: RegisterInputDTO) {
+    const regDisabled = process.env.ALLOW_REGISTRATION === 'false' ||
+      (process.env.NODE_ENV === 'production' && process.env.ALLOW_REGISTRATION !== 'true')
+    if (regDisabled) {
+      throw new HttpException(
+        { error: 'Registration is disabled', code: 'REGISTRATION_DISABLED' },
+        HttpStatus.FORBIDDEN,
+      )
+    }
     const data = await this.authService.register(input)
     return { data }
   }

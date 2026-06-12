@@ -55,6 +55,7 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Register' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 3600000 } })
   @Post('/register')
   async register(@Body() input: RegisterInputDTO) {
     const regDisabled = process.env.ALLOW_REGISTRATION === 'false' ||
@@ -173,6 +174,7 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Request Password Reset' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 900000 } })
   @Post('/request-password-reset')
   async requestPasswordReset(@Body() input: RequestResetPasswordInputDTO) {
     return await this.authService.requestResetPassword(input)
@@ -180,6 +182,7 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Reset Password' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 900000 } })
   @Post('/reset-password')
   async resetPassword(@Body() input: ResetPasswordInputDTO) {
     return await this.authService.resetPassword(input)
@@ -197,7 +200,7 @@ export class AuthController {
 
   @ApiOperation({ summary: 'Verify Email' })
   @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
+  @Throttle({ default: { limit: 10, ttl: 900000 } })
   @Post('/verify-email')
   async verifyEmail(@Body() input: { userId: string; verificationCode: string }) {
     return await this.authService.verifyEmail(input)

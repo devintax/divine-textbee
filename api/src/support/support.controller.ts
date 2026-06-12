@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common'
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common'
+import { Throttle } from '@nestjs/throttler'
 import {
   CreateSupportMessageDto,
   SupportCategory,
@@ -17,6 +18,7 @@ export class SupportController {
   ) {}
 
   @UseGuards(OptionalAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 900000 } })
   @Post('customer-support')
   async createSupportMessage(
     @Body() createSupportMessageDto: CreateSupportMessageDto,
@@ -40,6 +42,7 @@ export class SupportController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 3, ttl: 3600000 } })
   @Post('request-account-deletion')
   async requestAccountDeletion(
     @Body() body: { message: string; turnstileToken: string },

@@ -35,19 +35,36 @@ db.users.insertOne({
 
 The user can then login at `https://sms.yourdomain.com/login` and change their password.
 
-## Login Lockout
+## Rate Limits
 
-The login endpoint rate-limits to 5 failed attempts per 15 minutes per IP.
+| Endpoint | Limit | Window | Purpose |
+|---|---|---|---|
+| `POST /auth/login` | 5 req | 15 min | Brute-force protection |
+| `POST /auth/google-login` | 5 req | 15 min | Brute-force protection |
+| `POST /auth/register` | 10 req | 1 hour | Registration spam prevention |
+| `POST /auth/request-password-reset` | 3 req | 15 min | Reset-email spam / email enumeration |
+| `POST /auth/reset-password` | 5 req | 15 min | Reset-code brute-force |
+| `POST /auth/verify-email` | 10 req | 15 min | Verification-code brute-force |
+| `POST /support/customer-support` | 5 req | 15 min | Support-spam prevention |
+| `POST /support/request-account-deletion` | 3 req | 1 hour | Deletion-spam prevention |
+| All endpoints (global) | 500 req | 60s | Baseline DDoS protection |
+
+All limits are per-IP (tracked by `ThrottlerByIpGuard` which reads `x-forwarded-for` headers behind Cloudflare). Rate-limit counters are in-memory — restarting the `textbee-api` container resets all of them.
+
+## Lockout Recovery
 
 **If a legitimate user is locked out:**
 
+For login/password-reset lockouts:
 1. Wait 15 minutes — the counter resets automatically.
 2. Try from a different network (e.g., mobile hotspot) — the throttle is per IP.
-3. If urgent, restart the `textbee-api` container — this clears all in-memory throttle counters.
-4. As a last resort, temporarily increase the limit in `auth.controller.ts`:
-   - Find `@Throttle({ default: { limit: 5, ttl: 900000 } })`
-   - Increase `limit` or decrease `ttl`, rebuild and restart.
-   - Set back after the user logs in.
+3. Temporarily increase the limit (see below) or restart the container.
+
+**Temporary limit increase** (if urgently needed):
+1. Edit `api/src/auth/auth.controller.ts` — find the `@Throttle()` decorator on the affected route.
+2. Increase the `limit` value (e.g., `5` → `50`) or decrease the `ttl` (e.g., `900000` → `60000`).
+3. Rebuild and restart: `docker compose build textbee-api && docker compose up -d textbee-api`
+4. After the user logs in, revert the change and redeploy.
 
 ## Verifying Auth Guards Are Working
 

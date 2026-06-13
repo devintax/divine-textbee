@@ -71,6 +71,21 @@ export default function DevicesPage() {
     }
   }
 
+  async function handleToggle(deviceId: string, enabled: boolean) {
+    try {
+      const r = await fetch(`/api/textbee/devices/${deviceId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      const j = await r.json()
+      if (j.error) throw new Error(j.error)
+      await loadDevices()
+    } catch (e: any) {
+      setError(e.message)
+    }
+  }
+
   async function copyText(text: string) {
     try {
       await navigator.clipboard.writeText(text)
@@ -142,15 +157,19 @@ export default function DevicesPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    {d.enabled !== false ? (
-                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
-                        Enabled
-                      </span>
-                    ) : (
-                      <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-                        Disabled
-                      </span>
-                    )}
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault()
+                        handleToggle(d._id, !d.enabled)
+                      }}
+                      className={`text-xs px-2 py-0.5 rounded-full border ${
+                        d.enabled !== false
+                          ? 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200'
+                          : 'bg-gray-100 text-gray-500 border-gray-200 hover:bg-gray-200'
+                      }`}
+                    >
+                      {d.enabled !== false ? 'Enabled' : 'Disabled'}
+                    </button>
                     <span
                       className={`w-2.5 h-2.5 rounded-full ${
                         awaiting ? 'bg-yellow-400' : online ? 'bg-green-500' : 'bg-red-400'

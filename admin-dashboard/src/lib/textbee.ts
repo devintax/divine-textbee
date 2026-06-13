@@ -236,3 +236,18 @@ export async function deleteTextBeeDevice(deviceId: string): Promise<void> {
     throw new Error(err.error || `Delete device failed: ${res.status}`)
   }
 }
+
+export async function patchTextBeeDevice(
+  deviceId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const res = await fetch(`${TEXTBEE_API_URL}/gateway/devices/${deviceId}`, {
+    method: 'PATCH',
+    headers: headers(),
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Update device failed: ${res.status}`)
+  }
+}

@@ -54,8 +54,10 @@ export default function SendSmsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: message.trim(), recipients }),
       })
-      const j = await res.json()
-      if (!res.ok) throw new Error(j.error)
+      let j: any
+      const text = await res.text()
+      try { j = JSON.parse(text) } catch { throw new Error(`Server returned HTTP ${res.status} — response was not JSON. ${text.slice(0, 200)}`) }
+      if (!res.ok) throw new Error(j.error || j.message || `Request failed (${res.status})`)
       setResult({ ok: true, text: `SMS sent to ${recipients.length} recipient(s) successfully.` })
       setRecipient('')
       setMessage('')

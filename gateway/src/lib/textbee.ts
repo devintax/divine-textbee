@@ -41,11 +41,12 @@ export async function sendSMS(deviceId: string, to: string, message: string): Pr
       return { success: false, error: `TextBee error ${res.status}: ${body}` }
     }
 
-    const json = await res.json() as { _id?: string; smsId?: string; smsBatchId?: string }
+    const json = await res.json() as Record<string, unknown>
+    const body = (json.data || json) as Record<string, unknown>
     return {
-      success: true,
-      messageId: json._id || json.smsId,
-      batchId: json.smsBatchId,
+      success: body.success !== false,
+      messageId: String(body._id || body.smsId || ''),
+      batchId: String(body.smsBatchId || ''),
     }
   } catch (err: any) {
     return { success: false, error: err.message }

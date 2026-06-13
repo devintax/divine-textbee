@@ -246,6 +246,94 @@ export async function deleteSuppression(id: string): Promise<void> {
   }
 }
 
+// ── Templates ──────────────────────────────────────────────────────────────────────────
+
+export interface Template {
+  id: string
+  name: string
+  body: string
+  createdAt: string
+  updatedAt: string
+}
+
+export async function fetchTemplates(): Promise<Template[]> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/templates`, { headers: gatewayHeaders(), next: { revalidate: 5 } })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Failed to fetch templates: ${res.status}`)
+  const json = await res.json()
+  return json.data as Template[]
+}
+
+export async function createTemplate(name: string, body: string): Promise<Template> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/templates`, { method: 'POST', headers: gatewayHeaders(), body: JSON.stringify({ name, body }) })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error || `Create template failed: ${res.status}`)
+  return json
+}
+
+export async function updateTemplate(id: string, name: string, body: string): Promise<Template> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/templates/${id}`, { method: 'PUT', headers: gatewayHeaders(), body: JSON.stringify({ name, body }) })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error || `Update template failed: ${res.status}`)
+  return json
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/templates/${id}`, { method: 'DELETE', headers: gatewayHeaders() })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Delete template failed: ${res.status}`)
+}
+
+// ── Bulk send ──────────────────────────────────────────────────────────────────────────
+
+export interface BulkSendResult {
+  results: { phoneNumber: string; status: string; error?: string }[]
+  total: number
+  sent: number
+  failed: number
+  suppressed: number
+}
+
+export async function bulkSend(deviceId: string, message: string, recipients: string[], delaySeconds = 3): Promise<BulkSendResult> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/bulk-send`, { method: 'POST', headers: gatewayHeaders(), body: JSON.stringify({ message, recipients, deviceId, delaySeconds }) })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error || `Bulk send failed: ${res.status}`)
+  return json.data as BulkSendResult
+}
+
+// ── Scheduled sends ────────────────────────────────────────────────────────────────────
+
+export interface ScheduledSendEntry {
+  id: string
+  deviceId: string
+  message: string
+  recipients: string[]
+  scheduledAt: string
+  status: string
+  recurrence: string
+  totalSent: number
+  totalFailed: number
+  totalSuppressed: number
+  createdAt: string
+}
+
+export async function fetchScheduledSends(): Promise<ScheduledSendEntry[]> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/scheduled-sends`, { headers: gatewayHeaders(), next: { revalidate: 5 } })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Failed to fetch scheduled sends: ${res.status}`)
+  const json = await res.json()
+  return json.data as ScheduledSendEntry[]
+}
+
+export async function createScheduledSend(deviceId: string, message: string, recipients: string[], scheduledAt: string, recurrence = 'none'): Promise<ScheduledSendEntry> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/scheduled-sends`, { method: 'POST', headers: gatewayHeaders(), body: JSON.stringify({ deviceId, message, recipients, scheduledAt, recurrence }) })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error || `Create scheduled send failed: ${res.status}`)
+  return json
+}
+
+export async function cancelScheduledSend(id: string): Promise<void> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/scheduled-sends/${id}`, { method: 'DELETE', headers: gatewayHeaders() })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Cancel scheduled send failed: ${res.status}`)
+}
+
 export async function checkSuppressed(phoneNumbers: string[]): Promise<string[]> {
   const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/suppressions/check`, {
     method: 'POST',

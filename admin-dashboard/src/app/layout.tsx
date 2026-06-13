@@ -19,6 +19,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <NavLink href="/">Dashboard</NavLink>
             <NavLink href="/devices">Devices</NavLink>
             <NavLink href="/send">Send SMS</NavLink>
+            <NavLink href="/templates">Templates</NavLink>
+            <NavLink href="/bulk">Bulk Send</NavLink>
+            <NavLink href="/scheduled">Scheduled</NavLink>
             <NavLink href="/history">Message History</NavLink>
             <NavLink href="/api-keys">API Keys</NavLink>
             <NavLink href="/suppressions">Suppression List</NavLink>

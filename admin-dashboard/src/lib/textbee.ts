@@ -3,53 +3,40 @@ const TEXTBEE_API_KEY = process.env.TEXTBEE_API_KEY || ''
 const GATEWAY_ADMIN_URL = process.env.GATEWAY_ADMIN_URL || ''
 const GATEWAY_ADMIN_TOKEN = process.env.GATEWAY_ADMIN_TOKEN || ''
 
-function headers() {
-  return {
-    'Content-Type': 'application/json',
-    'x-api-key': TEXTBEE_API_KEY,
+async function fetchTextBee(path: string, options?: RequestInit & { raw?: boolean }) {
+  const url = `${TEXTBEE_API_URL}${path}`
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': TEXTBEE_API_KEY,
+      ...(options?.headers || {}),
+    },
+  })
+  const text = await res.text()
+  let json: any
+  try { json = JSON.parse(text) } catch {
+    throw new Error(`TextBee API returned HTTP ${res.status} at ${path}: ${text.slice(0, 200)}`)
   }
+  if (!res.ok) {
+    throw new Error(json.error || json.message || `TextBee API error ${res.status} at ${path}`)
+  }
+  return options?.raw ? json : (json.data ?? json)
 }
 
 export async function fetchDevices() {
-  const res = await fetch(`${TEXTBEE_API_URL}/gateway/devices`, {
-    headers: headers(),
-    next: { revalidate: 15 },
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || `Failed to fetch devices: ${res.status}`)
-  }
-  const json = await res.json()
-  return json.data as Device[]
+  return fetchTextBee('/gateway/devices', { next: { revalidate: 15 } }) as Promise<Device[]>
 }
 
 export async function fetchStats() {
-  const res = await fetch(`${TEXTBEE_API_URL}/gateway/stats`, {
-    headers: headers(),
-    next: { revalidate: 15 },
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || `Failed to fetch stats: ${res.status}`)
-  }
-  const json = await res.json()
-  return json.data as Stats
+  return fetchTextBee('/gateway/stats', { next: { revalidate: 15 } }) as Promise<Stats>
 }
 
 export async function sendSms(deviceId: string, message: string, recipients: string[]) {
-  const res = await fetch(
-    `${TEXTBEE_API_URL}/gateway/devices/${deviceId}/send-sms`,
-    {
-      method: 'POST',
-      headers: headers(),
-      body: JSON.stringify({ message, recipients }),
-    },
-  )
-  const json = await res.json()
-  if (!res.ok) {
-    throw new Error(json.error || json.message || `Send failed: ${res.status}`)
-  }
-  return json.data
+  return fetchTextBee(`/gateway/devices/${deviceId}/send-sms`, {
+    method: 'POST',
+    body: JSON.stringify({ message, recipients }),
+  })
 }
 
 export async function fetchMessages(
@@ -58,21 +45,11 @@ export async function fetchMessages(
   limit = 50,
   type: 'all' | 'sent' | 'received' = 'all',
 ) {
-  const params = new URLSearchParams({
-    page: String(page),
-    limit: String(limit),
-    type,
-  })
-  const res = await fetch(
-    `${TEXTBEE_API_URL}/gateway/devices/${deviceId}/messages?${params}`,
-    { headers: headers(), next: { revalidate: 10 } },
-  )
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || `Failed to fetch messages: ${res.status}`)
-  }
-  const json = await res.json()
-  return json as PaginatedMessages
+  const params = new URLSearchParams({ page: String(page), limit: String(limit), type })
+  return fetchTextBee(`/gateway/devices/${deviceId}/messages?${params}`, {
+    next: { revalidate: 10 },
+    raw: true,
+  }) as Promise<PaginatedMessages>
 }
 
 export function isDeviceOnline(device: Device): boolean {
@@ -212,16 +189,12 @@ export async function revokeApiKey(id: string): Promise<void> {
 // ── TextBee API keys (for device pairing) ─────────────────────────────────────────────────
 
 export async function generateTextBeeApiKey(): Promise<string> {
-  const res = await fetch(`${TEXTBEE_API_URL}/auth/api-keys`, {
+  const result = await fetchTextBee('/auth/api-keys', {
     method: 'POST',
-    headers: headers(),
     body: JSON.stringify({}),
   })
-  const json = await res.json()
-  if (!res.ok) {
-    throw new Error(json.error || json.message || `Generate key failed: ${res.status}`)
-  }
-  return json.data.apiKey as string
+  // Response is { data: "<uuid>" } where data is the string directly
+  return typeof result === 'string' ? result : result.apiKey || result
 }
 
 // ── Device management ──────────────────────────────────────────────────────────────────────
@@ -288,27 +261,17 @@ export async function checkSuppressed(phoneNumbers: string[]): Promise<string[]>
 }
 
 export async function deleteTextBeeDevice(deviceId: string): Promise<void> {
-  const res = await fetch(`${TEXTBEE_API_URL}/gateway/devices/${deviceId}`, {
+  await fetchTextBee(`/gateway/devices/${deviceId}`, {
     method: 'DELETE',
-    headers: headers(),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `Delete device failed: ${res.status}`)
-  }
 }
 
 export async function patchTextBeeDevice(
   deviceId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
-  const res = await fetch(`${TEXTBEE_API_URL}/gateway/devices/${deviceId}`, {
+  await fetchTextBee(`/gateway/devices/${deviceId}`, {
     method: 'PATCH',
-    headers: headers(),
     body: JSON.stringify(patch),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.error || `Update device failed: ${res.status}`)
-  }
 }

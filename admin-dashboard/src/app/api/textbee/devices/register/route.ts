@@ -5,6 +5,9 @@ import QRCode from 'qrcode'
 export async function POST() {
   try {
     const apiKey = await generateTextBeeApiKey()
+    if (!apiKey) {
+      return NextResponse.json({ error: 'TextBee API returned empty key' }, { status: 502 })
+    }
     const qrDataUrl = await QRCode.toDataURL(apiKey, {
       width: 300,
       margin: 2,

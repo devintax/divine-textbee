@@ -1,12 +1,11 @@
-# Stage 1: Build (deps + builder merged to preserve pnpm symlinks)
+# Stage 1: Build
 FROM node:22-alpine AS builder
 WORKDIR /app
-RUN npm install -g pnpm@9
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm build
+RUN npm run build
 
 # Stage 2: Production runner
 FROM node:22-alpine AS runner

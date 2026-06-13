@@ -1,9 +1,8 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import type { Device, Template } from '@/lib/textbee'
 
-// Case-insensitive variable matching with whitespace trimming
 const VAR_REGEX = /\{\{\s*([^}]+)\s*\}\}/g
 
 function renderTemplate(body: string, row: Record<string, string>): { text: string; missing: string[] } {
@@ -11,15 +10,11 @@ function renderTemplate(body: string, row: Record<string, string>): { text: stri
   for (const [k, v] of Object.entries(row)) rowLower[k.toLowerCase()] = v
 
   const missing: string[] = []
-  const used = new Set<string>()
 
   const text = body.replace(VAR_REGEX, (_, raw: string) => {
     const name = raw.trim()
     const key = name.toLowerCase()
-    if (rowLower[key] !== undefined) {
-      used.add(key)
-      return rowLower[key]
-    }
+    if (rowLower[key] !== undefined) return rowLower[key]
     if (!missing.includes(name)) missing.push(name)
     return `[MISSING: ${name}]`
   })
@@ -31,9 +26,7 @@ function extractVars(body: string): string[] {
   const set = new Set<string>()
   let m: RegExpExecArray | null
   const re = new RegExp(VAR_REGEX.source, 'g')
-  while ((m = re.exec(body)) !== null) {
-    set.add(m[1].trim())
-  }
+  while ((m = re.exec(body)) !== null) set.add(m[1].trim())
   return [...set]
 }
 
@@ -51,9 +44,6 @@ export default function BulkSendPage() {
   const [sending, setSending] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [previewRow, setPreviewRow] = useState<Record<string, string> | null>(null)
-  const [previewedOnce, setPreviewedOnce] = useState(false)
-  const [previewText, setPreviewText] = useState('')
-  const [previewMissing, setPreviewMissing] = useState<string[]>([])
   const [error, setError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [bulkCap, setBulkCap] = useState(50)
@@ -71,11 +61,37 @@ export default function BulkSendPage() {
   const rawMessage = templateId && currentTemplate ? currentTemplate.body : customMessage
   const needsCustom = !templateId
 
+  // Eagerly computed preview — always in sync with current template/row
+  const previewInfo = useMemo(() => {
+    if (!previewRow) return null
+    if (currentTemplate) return renderTemplate(currentTemplate.body, previewRow)
+    return { text: customMessage, missing: [] as string[] }
+  }, [currentTemplate, previewRow, customMessage])
+
+  const phoneNumbers = parsedRows.map((r) => r[phoneColumn]).filter(Boolean)
+  const overCap = phoneNumbers.length > bulkCap
+
+  // Disabled reason: most specific blocker first
+  let disableReason = ''
+  let canSend = false
+  if (!deviceId) disableReason = 'Select a device'
+  else if (parsedRows.length === 0) disableReason = 'Parse CSV data first'
+  else if (!phoneColumn) disableReason = 'Select the phone number column'
+  else if (phoneNumbers.length === 0) disableReason = 'No phone numbers found in the selected column'
+  else if (!rawMessage) disableReason = 'Select a template or write a message'
+  else if (overCap) disableReason = `Over recipient cap (${bulkCap} max, CSV has ${phoneNumbers.length})`
+  else if (currentTemplate && previewInfo && previewInfo.missing.length > 0) {
+    const vars = previewInfo.missing.map((v) => `{{ ${v} }}`).join(', ')
+    disableReason = `Template variable${previewInfo.missing.length > 1 ? 's' : ''} ${vars} ${previewInfo.missing.length > 1 ? "don't" : "doesn't"} match any CSV column`
+  } else if (currentTemplate && previewInfo && previewInfo.missing.length === 0) {
+    canSend = true
+  } else if (!currentTemplate && previewRow) {
+    canSend = true
+  }
+
   function parseCSV(text: string) {
     setError('')
     setResult(null)
-    setPreviewedOnce(false)
-    setPreviewText('')
     const lines = text.trim().split('\n').filter(Boolean)
     if (lines.length < 2) { setError('CSV must have at least a header row and one data row'); return }
     const headers = lines[0].split(',').map((h) => h.trim())
@@ -91,9 +107,7 @@ export default function BulkSendPage() {
     if (rows.length > 0) setPreviewRow(rows[0])
   }
 
-  function handleParseClick() {
-    parseCSV(csvText)
-  }
+  function handleParseClick() { parseCSV(csvText) }
 
   function handleFileUpload(f: File) {
     if (!f.name.endsWith('.csv')) { setError('Please upload a .csv file'); return }
@@ -113,58 +127,24 @@ export default function BulkSendPage() {
     const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f)
   }
 
-  function handlePreviewRow(row: Record<string, string>) {
-    setPreviewRow(row)
-    if (currentTemplate) {
-      const { text, missing } = renderTemplate(currentTemplate.body, row)
-      setPreviewText(text)
-      setPreviewMissing(missing)
-    } else {
-      setPreviewText(customMessage)
-      setPreviewMissing([])
-    }
-    setPreviewedOnce(true)
-  }
-
-  // Determine disabled reason
-  const phoneNumbers = parsedRows.map((r) => r[phoneColumn]).filter(Boolean)
-  const overCap = phoneNumbers.length > bulkCap
-
-  let disableReason = ''
-  let canSend = false
-  if (!deviceId) disableReason = 'Select a device'
-  else if (parsedRows.length === 0) disableReason = 'Parse CSV data first'
-  else if (!phoneColumn) disableReason = 'Select the phone number column'
-  else if (phoneNumbers.length === 0) disableReason = 'No phone numbers found in the selected column'
-  else if (!rawMessage) disableReason = 'Select a template or write a message'
-  else if (overCap) disableReason = `Over recipient cap (${bulkCap} max, CSV has ${phoneNumbers.length})`
-  else if (currentTemplate && previewMissing.length > 0) disableReason = `Missing template variables: ${previewMissing.join(', ')} — check CSV column names`
-  else if (!previewedOnce) disableReason = 'Preview a recipient before sending'
-  else canSend = true
-
   async function handleSend() {
     setError(''); setResult(null)
     if (!deviceId) { setError('Select a device'); return }
     if (!phoneColumn) { setError('Select the phone number column'); return }
     if (!rawMessage) { setError('Select a template or write a message'); return }
-
     const numPhones = phoneNumbers.length
     if (numPhones === 0) { setError('No phone numbers found in the selected column'); return }
-    if (numPhones > bulkCap) { setError(`Recipient cap is ${bulkCap}, CSV has ${numPhones}. Reduce or increase BULK_SEND_CAP env var.`); return }
-
-    // Check missing vars
+    if (numPhones > bulkCap) { setError(`Recipient cap is ${bulkCap}, CSV has ${numPhones}`); return }
     if (currentTemplate) {
       const { missing } = renderTemplate(currentTemplate.body, parsedRows[0])
-      if (missing.length > 0) { setError(`Missing template variables: ${missing.join(', ')}. Check CSV column names match.`); return }
+      if (missing.length > 0) { setError(`Missing variables: ${missing.join(', ')}`); return }
     }
-
     setSending(true)
     try {
       const entries = parsedRows.map((r) => ({
         phone: r[phoneColumn],
         message: currentTemplate ? renderTemplate(currentTemplate.body, r).text : customMessage,
       })).filter((e) => e.phone)
-
       const res = await fetch('/api/gateway/bulk-send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -195,7 +175,7 @@ export default function BulkSendPage() {
           </div>
         </div>
 
-        {/* CSV upload section */}
+        {/* CSV upload */}
         <div>
           <label className="block text-xs font-medium mb-1">Upload CSV</label>
           <div
@@ -234,7 +214,7 @@ export default function BulkSendPage() {
 
         <div>
           <label className="block text-xs font-medium mb-1">Template <span className="text-gray-400">(or write custom message below)</span></label>
-          <select value={templateId} onChange={(e) => { setTemplateId(e.target.value); setPreviewedOnce(false); setPreviewText(''); setPreviewMissing([]) }} className="w-full border rounded-lg px-3 py-2 text-sm">
+          <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm">
             <option value="">-- No template (use custom message) --</option>
             {templates.map((t) => (<option key={t.id} value={t.id}>{t.name}</option>))}
           </select>
@@ -243,85 +223,76 @@ export default function BulkSendPage() {
         {needsCustom && (
           <div>
             <label className="block text-xs font-medium mb-1">Custom message</label>
-            <textarea value={customMessage} onChange={(e) => { setCustomMessage(e.target.value); setPreviewedOnce(false) }} rows={3} maxLength={1600} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Type a message (no variable substitution)" />
+            <textarea value={customMessage} onChange={(e) => setCustomMessage(e.target.value)} rows={3} maxLength={1600} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="Type a message (no variable substitution)" />
             <div className="text-xs text-gray-400 mt-1">{customMessage.length} / 1600</div>
           </div>
         )}
 
-        {/* Variable extraction hint */}
         {currentTemplate && (
           <div className="text-xs text-gray-500">
             Template variables: <code className="bg-gray-100 px-1 rounded">{extractVars(currentTemplate.body).join(', ') || '(none)'}</code>
           </div>
         )}
 
-        {/* Per-row preview */}
+        {/* Per-row preview selector */}
         {parsedRows.length > 0 && (
           <div>
             <label className="block text-xs font-medium mb-1">Preview a recipient</label>
-            <div className="flex gap-2">
-              <select
-                value={previewRow ? parsedRows.indexOf(previewRow) : -1}
-                onChange={(e) => handlePreviewRow(parsedRows[parseInt(e.target.value)])}
-                className="flex-1 border rounded-lg px-3 py-2 text-sm"
-              >
-                <option value={-1}>-- Select a row --</option>
-                {parsedRows.map((row, i) => (
-                  <option key={i} value={i}>
-                    {row[phoneColumn] || `Row ${i + 1}`} — {Object.entries(row).slice(0, 2).map(([k, v]) => `${k}=${v}`).join(', ')}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <select
+              value={previewRow ? parsedRows.indexOf(previewRow) : -1}
+              onChange={(e) => setPreviewRow(parsedRows[parseInt(e.target.value)])}
+              className="w-full border rounded-lg px-3 py-2 text-sm"
+            >
+              {parsedRows.map((row, i) => (
+                <option key={i} value={i}>
+                  {row[phoneColumn] || `Row ${i + 1}`} — {Object.entries(row).slice(0, 2).map(([k, v]) => `${k}=${v}`).join(', ')}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 
-        {previewRow && (
-          <div className="bg-gray-50 rounded-lg p-3">
+        {/* Live preview — always rendered, never stale */}
+        {previewInfo && (
+          <div className={`rounded-lg p-3 ${previewInfo.missing.length > 0 ? 'bg-red-50 border border-red-200' : 'bg-gray-50'}`}>
             <div className="text-xs font-semibold mb-1">Message preview</div>
-            <div className="text-xs text-gray-500 mb-1">{Object.entries(previewRow).map(([k, v]) => `${k}=${v}`).join(', ')}</div>
-            <div className="bg-white border rounded p-2 text-sm whitespace-pre-wrap">{previewText || rawMessage}</div>
-            {previewMissing.length > 0 && (
-              <div className="text-xs text-red-500 mt-1">
-                &#9888; Missing variables (not found in CSV): {previewMissing.join(', ')}
+            <div className="text-xs text-gray-500 mb-1">{Object.entries(previewRow!).map(([k, v]) => `${k}=${v}`).join(', ')}</div>
+            <div className="bg-white border rounded p-2 text-sm whitespace-pre-wrap">{previewInfo.text}</div>
+            {previewInfo.missing.length > 0 && (
+              <div className="text-xs text-red-500 mt-1.5 font-medium">
+                &#9888; {previewInfo.missing.map((v) => `{{ ${v} }}`).join(', ')} — no matching CSV column
               </div>
             )}
-            {previewedOnce && (
-              <div className="text-xs text-green-600 mt-1">&#10003; Preview verified — message will match this exactly</div>
+            {previewInfo.missing.length === 0 && (
+              <div className="text-xs text-green-600 mt-1">&#10003; All variables resolved — sent message matches this exactly</div>
             )}
           </div>
         )}
 
-        {/* Suppression info */}
         {parsedRows.length > 0 && (
           <div className="text-xs text-gray-400">
-            Recipients will be checked against the suppression list before sending. Opted-out numbers are skipped.
+            Recipients checked against suppression list before sending. Opted-out numbers are skipped.
           </div>
         )}
 
         {error && <p className="text-red-600 text-sm">{error}</p>}
 
         {parsedRows.length > 0 && (
-          <div>
-            <button
-              onClick={handleSend}
-              disabled={!canSend || sending}
-              className={`w-full px-6 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                canSend
-                  ? 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
-                  : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-              }`}
-            >
-              {sending
-                ? `Sending to ${phoneNumbers.length} recipient(s)...`
-                : canSend
-                  ? `Send to ${phoneNumbers.length} recipient(s)`
-                  : disableReason}
-            </button>
-            {!canSend && !sending && (
-              <p className="text-xs text-gray-400 mt-1 text-center">{disableReason}</p>
-            )}
-          </div>
+          <button
+            onClick={handleSend}
+            disabled={!canSend || sending}
+            className={`w-full px-6 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              canSend
+                ? 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
+                : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+            }`}
+          >
+            {sending
+              ? `Sending to ${phoneNumbers.length} recipient(s)...`
+              : canSend
+                ? `Send to ${phoneNumbers.length} recipient(s)`
+                : disableReason}
+          </button>
         )}
 
         {result && (

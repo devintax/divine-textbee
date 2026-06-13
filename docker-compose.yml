@@ -143,6 +143,7 @@ services:
       - TEXTBEE_API_URL=${TEXTBEE_API_URL:-http://textbee-api:3001/api/v1}
       - TEXTBEE_API_KEY=${TEXTBEE_API_KEY}
       - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN}
+      - BULK_MAX_RECIPIENTS=${BULK_MAX_RECIPIENTS:-50}
     depends_on:
       textbee-db:
         condition: service_healthy

@@ -180,13 +180,19 @@ router.delete('/templates/:id', async (req: Request, res: Response) => {
   res.json({ success: true })
 })
 
-// ── Bulk send (paced, suppression-checked) ─────────────────────────────────────────────
+// ── Bulk send (paced, suppression-checked, per-recipient messages) ────────────────────
+
+const BULK_MAX_RECIPIENTS = parseInt(process.env.BULK_MAX_RECIPIENTS || '50', 10)
 
 router.post('/bulk-send', async (req: Request, res: Response) => {
   try {
-    const { message, recipients, deviceId, delaySeconds } = req.body
-    if (!message || !Array.isArray(recipients) || recipients.length === 0) {
-      res.status(400).json({ error: 'Missing or invalid message/recipients' })
+    const { recipients, deviceId, delaySeconds } = req.body
+    if (!Array.isArray(recipients) || recipients.length === 0) {
+      res.status(400).json({ error: 'Missing or invalid recipients array' })
+      return
+    }
+    if (recipients.length > BULK_MAX_RECIPIENTS) {
+      res.status(400).json({ error: `Bulk send limited to ${BULK_MAX_RECIPIENTS} recipients per batch (CSV has ${recipients.length})` })
       return
     }
 
@@ -198,40 +204,42 @@ router.post('/bulk-send', async (req: Request, res: Response) => {
     }
     const device = devices[0]._id
 
-    // Check each recipient against suppression
-    const suppressed = await Suppression.find({ phoneNumber: { $in: recipients.map((r: string) => r.trim()) } }).lean()
+    // Build recipient list: each entry is { phone, message }
+    const entries: { phone: string; message: string }[] = recipients.map((r: any) =>
+      typeof r === 'string' ? { phone: r.trim(), message: req.body.message || '' } : { phone: (r.phone || '').trim(), message: r.message || '' }
+    )
+
+    const phoneNumbers = entries.map((e) => e.phone).filter(Boolean)
+    const suppressed = await Suppression.find({ phoneNumber: { $in: phoneNumbers } }).lean()
     const suppressedSet = new Set(suppressed.map((s) => s.phoneNumber))
 
-    const results: { phoneNumber: string; status: string; error?: string }[] = []
+    const results: { phoneNumber: string; message: string; status: string; error?: string }[] = []
     let sent = 0, failed = 0, skipped = 0
 
-    for (const rawRecipient of recipients) {
-      const phoneNumber = rawRecipient.trim()
+    for (const entry of entries) {
+      const { phone: phoneNumber, message } = entry
       if (suppressedSet.has(phoneNumber)) {
-        results.push({ phoneNumber, status: 'suppressed', error: 'Opted out' })
+        results.push({ phoneNumber, message, status: 'suppressed', error: 'Opted out' })
         skipped++
         continue
       }
       try {
         const result = await sendSMS(device, phoneNumber, message)
         if (result.success) {
-          results.push({ phoneNumber, status: 'sent' })
+          results.push({ phoneNumber, message, status: 'sent' })
           sent++
         } else {
-          results.push({ phoneNumber, status: 'failed', error: result.error })
+          results.push({ phoneNumber, message, status: 'failed', error: result.error })
           failed++
         }
       } catch (err: any) {
-        results.push({ phoneNumber, status: 'failed', error: err.message })
+        results.push({ phoneNumber, message, status: 'failed', error: err.message })
         failed++
       }
-      // Pace between sends
-      if (recipients.length > 1) {
-        await new Promise((r) => setTimeout(r, delay * 1000))
-      }
+      if (entries.length > 1) await new Promise((r) => setTimeout(r, delay * 1000))
     }
 
-    res.json({ data: { results, total: recipients.length, sent, failed, suppressed: skipped } })
+    res.json({ data: { results, total: entries.length, sent, failed, suppressed: skipped } })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }

@@ -285,15 +285,15 @@ export async function deleteTemplate(id: string): Promise<void> {
 // ── Bulk send ──────────────────────────────────────────────────────────────────────────
 
 export interface BulkSendResult {
-  results: { phoneNumber: string; status: string; error?: string }[]
+  results: { phoneNumber: string; message: string; status: string; error?: string }[]
   total: number
   sent: number
   failed: number
   suppressed: number
 }
 
-export async function bulkSend(deviceId: string, message: string, recipients: string[], delaySeconds = 3): Promise<BulkSendResult> {
-  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/bulk-send`, { method: 'POST', headers: gatewayHeaders(), body: JSON.stringify({ message, recipients, deviceId, delaySeconds }) })
+export async function bulkSend(deviceId: string, entries: { phone: string; message: string }[], delaySeconds = 3): Promise<BulkSendResult> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/bulk-send`, { method: 'POST', headers: gatewayHeaders(), body: JSON.stringify({ recipients: entries, deviceId, delaySeconds }) })
   const json = await res.json()
   if (!res.ok) throw new Error(json.error || `Bulk send failed: ${res.status}`)
   return json.data as BulkSendResult

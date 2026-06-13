@@ -51,6 +51,8 @@ services:
       - FIREBASE_CLIENT_EMAIL=${FIREBASE_CLIENT_EMAIL}
       - FIREBASE_CLIENT_ID=${FIREBASE_CLIENT_ID}
       - FIREBASE_CLIENT_C509_CERT_URL=${FIREBASE_CLIENT_C509_CERT_URL}
+      - SUPPRESSION_API_URL=${GATEWAY_ADMIN_URL:-http://textbee-gateway:4001}
+      - SUPPRESSION_API_TOKEN=${GATEWAY_ADMIN_TOKEN}
     depends_on:
       textbee-db:
         condition: service_healthy

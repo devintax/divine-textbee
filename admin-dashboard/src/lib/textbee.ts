@@ -226,6 +226,67 @@ export async function generateTextBeeApiKey(): Promise<string> {
 
 // ── Device management ──────────────────────────────────────────────────────────────────────
 
+// ── Suppression list ─────────────────────────────────────────────────────────────────────
+
+export interface SuppressionEntry {
+  id: string
+  phoneNumber: string
+  reason: string
+  source: 'manual' | 'auto_stop'
+  createdAt: string
+}
+
+export async function fetchSuppressions(): Promise<SuppressionEntry[]> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/suppressions`, {
+    headers: gatewayHeaders(),
+    next: { revalidate: 5 },
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Failed to fetch suppressions: ${res.status}`)
+  }
+  const json = await res.json()
+  return json.data as SuppressionEntry[]
+}
+
+export async function createSuppression(phoneNumber: string, reason?: string): Promise<SuppressionEntry> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/suppressions`, {
+    method: 'POST',
+    headers: gatewayHeaders(),
+    body: JSON.stringify({ phoneNumber, reason }),
+  })
+  const json = await res.json()
+  if (!res.ok) {
+    throw new Error(json.error || `Add suppression failed: ${res.status}`)
+  }
+  return json
+}
+
+export async function deleteSuppression(id: string): Promise<void> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/suppressions/${id}`, {
+    method: 'DELETE',
+    headers: gatewayHeaders(),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Delete suppression failed: ${res.status}`)
+  }
+}
+
+export async function checkSuppressed(phoneNumbers: string[]): Promise<string[]> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/suppressions/check`, {
+    method: 'POST',
+    headers: gatewayHeaders(),
+    body: JSON.stringify({ phoneNumbers }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Check suppression failed: ${res.status}`)
+  }
+  const json = await res.json()
+  return (json.suppressed as { phoneNumber: string }[]).map((s) => s.phoneNumber)
+}
+
 export async function deleteTextBeeDevice(deviceId: string): Promise<void> {
   const res = await fetch(`${TEXTBEE_API_URL}/gateway/devices/${deviceId}`, {
     method: 'DELETE',

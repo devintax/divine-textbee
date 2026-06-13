@@ -878,6 +878,30 @@ export class GatewayService {
         console.log(e)
       })
 
+    // Auto-STOP detection: if the inbound message matches opt-out keywords,
+    // add the sender to the gateway's suppression list (fire-and-forget).
+    const STOP_KEYWORDS = ['STOP', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'STOPALL']
+    const msgUpper = (dto.message || '').toUpperCase().trim()
+    if (STOP_KEYWORDS.some((kw) => msgUpper === kw || msgUpper.startsWith(kw + ' ') || msgUpper.endsWith(' ' + kw) || msgUpper.includes(' ' + kw + ' '))) {
+      const supUrl = process.env.SUPPRESSION_API_URL
+      const supToken = process.env.SUPPRESSION_API_TOKEN
+      if (supUrl && supToken) {
+        fetch(`${supUrl}/admin/suppressions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${supToken}`,
+          },
+          body: JSON.stringify({
+            phoneNumber: dto.sender,
+            reason: `Auto-STOP from inbound reply: "${dto.message}"`,
+          }),
+        }).catch((e) => {
+          console.error('Failed to auto-suppress via gateway:', e)
+        })
+      }
+    }
+
     return sms
   }
 

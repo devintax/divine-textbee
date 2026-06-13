@@ -21,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <NavLink href="/send">Send SMS</NavLink>
             <NavLink href="/history">Message History</NavLink>
             <NavLink href="/api-keys">API Keys</NavLink>
+            <NavLink href="/suppressions">Suppression List</NavLink>
             <NavLink href="/settings">Settings</NavLink>
             <div className="mt-auto pt-4 border-t border-gray-700">
               <LogoutButton />

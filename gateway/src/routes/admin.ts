@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { ApiKey } from '../models/ApiKey'
 import { Usage } from '../models/Usage'
+import { Suppression } from '../models/Suppression'
 import { generateKey, hashKey } from '../lib/hash'
 
 const router = Router()
@@ -60,6 +61,78 @@ router.post('/keys/:id/revoke', async (req: Request, res: Response) => {
     return
   }
   res.json({ id: key._id, label: key.label, active: key.active })
+})
+
+// ── Suppression list ──────────────────────────────────────────────────────────────────────
+
+router.get('/suppressions', async (_req: Request, res: Response) => {
+  const items = await Suppression.find().sort({ createdAt: -1 }).lean()
+  res.json({
+    data: items.map((s) => ({
+      id: s._id,
+      phoneNumber: s.phoneNumber,
+      reason: s.reason,
+      source: s.source,
+      createdAt: s.createdAt,
+    })),
+  })
+})
+
+router.post('/suppressions', async (req: Request, res: Response) => {
+  const { phoneNumber, reason } = req.body
+  if (!phoneNumber || typeof phoneNumber !== 'string' || phoneNumber.trim().length === 0) {
+    res.status(400).json({ error: 'Missing or invalid "phoneNumber"' })
+    return
+  }
+
+  const normalized = phoneNumber.trim()
+  const exists = await Suppression.findOne({ phoneNumber: normalized })
+  if (exists) {
+    res.status(409).json({ error: 'Phone number is already suppressed' })
+    return
+  }
+
+  const item = await Suppression.create({
+    phoneNumber: normalized,
+    reason: reason || 'Manually added',
+    source: 'manual',
+  })
+
+  res.status(201).json({
+    id: item._id,
+    phoneNumber: item.phoneNumber,
+    reason: item.reason,
+    source: item.source,
+    createdAt: item.createdAt,
+  })
+})
+
+router.delete('/suppressions/:id', async (req: Request, res: Response) => {
+  const item = await Suppression.findByIdAndDelete(req.params.id as string)
+  if (!item) {
+    res.status(404).json({ error: 'Suppression not found' })
+    return
+  }
+  res.json({ success: true, phoneNumber: item.phoneNumber })
+})
+
+router.post('/suppressions/check', async (req: Request, res: Response) => {
+  const { phoneNumbers } = req.body
+  if (!Array.isArray(phoneNumbers) || phoneNumbers.length === 0) {
+    res.status(400).json({ error: 'Missing or invalid "phoneNumbers" array' })
+    return
+  }
+
+  const found = await Suppression.find({
+    phoneNumber: { $in: phoneNumbers.map((p: string) => p.trim()) },
+  }).lean()
+
+  res.json({
+    suppressed: found.map((s) => ({
+      phoneNumber: s.phoneNumber,
+      reason: s.reason,
+    })),
+  })
 })
 
 export default router

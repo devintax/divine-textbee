@@ -4,12 +4,17 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Device } from '@/lib/textbee'
 
+type MessageType = 'transactional' | 'marketing'
+
 export default function SendSmsPage() {
   const router = useRouter()
   const [devices, setDevices] = useState<Device[]>([])
   const [deviceId, setDeviceId] = useState('')
   const [recipient, setRecipient] = useState('')
   const [message, setMessage] = useState('')
+  const [messageType, setMessageType] = useState<MessageType>('transactional')
+  const [complianceFooter, setComplianceFooter] = useState(true)
+  const [footerText, setFooterText] = useState('Reply STOP to opt out, HELP for help')
   const [sending, setSending] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
   const [error, setError] = useState('')
@@ -24,6 +29,10 @@ export default function SendSmsPage() {
       })
       .catch((e) => setError(e.message))
   }, [])
+
+  const effectiveMessage = complianceFooter
+    ? message.trim() + '\n\n' + footerText
+    : message.trim()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -52,11 +61,12 @@ export default function SendSmsPage() {
       const res = await fetch(`/api/textbee/devices/${deviceId}/send-sms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message.trim(), recipients }),
+        body: JSON.stringify({ message: effectiveMessage, recipients }),
       })
       let j: any
       const text = await res.text()
       try { j = JSON.parse(text) } catch { throw new Error(`Server returned HTTP ${res.status} — response was not JSON. ${text.slice(0, 200)}`) }
+      if (res.status === 403) throw new Error(j.error || 'Request blocked')
       if (!res.ok) throw new Error(j.error || j.message || `Request failed (${res.status})`)
       setResult({ ok: true, text: `SMS sent to ${recipients.length} recipient(s) successfully.` })
       setRecipient('')
@@ -91,6 +101,37 @@ export default function SendSmsPage() {
         </div>
 
         <div>
+          <label className="block text-sm font-medium mb-1">Message type</label>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="messageType"
+                value="transactional"
+                checked={messageType === 'transactional'}
+                onChange={() => setMessageType('transactional')}
+              />
+              <span>Transactional</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="messageType"
+                value="marketing"
+                checked={messageType === 'marketing'}
+                onChange={() => setMessageType('marketing')}
+              />
+              <span>Marketing</span>
+            </label>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            {messageType === 'marketing'
+              ? 'Marketing messages have stricter consent and opt-out requirements. Ensure you have appropriate consent before sending.'
+              : 'Transactional messages (account alerts, order confirmations) typically have relaxed opt-out requirements.'}
+          </p>
+        </div>
+
+        <div>
           <label className="block text-sm font-medium mb-1">
             Recipients <span className="text-gray-400">(one per line, with country code)</span>
           </label>
@@ -113,7 +154,37 @@ export default function SendSmsPage() {
             placeholder="Type your SMS message..."
             className="w-full border rounded-lg px-3 py-2 text-sm"
           />
-          <div className="text-xs text-gray-400 mt-1">{message.length} / 1600</div>
+          <div className="text-xs text-gray-400 mt-1">
+            {effectiveMessage.length} / 1600
+            {complianceFooter && message.trim() && (
+              <span className="text-gray-400"> (includes {footerText.length} char footer)</span>
+            )}
+          </div>
+        </div>
+
+        <div className="border rounded-lg p-3 bg-gray-50">
+          <label className="flex items-center gap-2 text-sm cursor-pointer mb-2">
+            <input
+              type="checkbox"
+              checked={complianceFooter}
+              onChange={(e) => setComplianceFooter(e.target.checked)}
+            />
+            <span className="font-medium">Append compliance footer</span>
+          </label>
+          {complianceFooter && (
+            <div>
+              <input
+                type="text"
+                value={footerText}
+                onChange={(e) => setFooterText(e.target.value)}
+                className="w-full border rounded px-2 py-1.5 text-sm"
+                placeholder="Reply STOP to opt out, HELP for help"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Automatically appended to every message. Customize for your Sender ID or brand.
+              </p>
+            </div>
+          )}
         </div>
 
         {error && <p className="text-red-600 text-sm">{error}</p>}

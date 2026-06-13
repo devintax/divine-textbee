@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { keyAuth } from '../middleware/keyAuth'
 import { Message } from '../models/Message'
 import { Usage } from '../models/Usage'
+import { Suppression } from '../models/Suppression'
 import { getActiveDevices, sendSMS } from '../lib/textbee'
 import mongoose from 'mongoose'
 
@@ -21,6 +22,17 @@ router.post('/sms', async (req: Request, res: Response) => {
   }
   if (message.length > 1600) {
     res.status(400).json({ error: 'Message too long (max 1600 characters)' })
+    return
+  }
+
+  // Suppression check
+  const suppressed = await Suppression.findOne({ phoneNumber: to.trim() })
+  if (suppressed) {
+    res.status(403).json({
+      error: `Recipient ${to.trim()} has opted out and cannot receive messages`,
+      suppressed: true,
+      reason: suppressed.reason,
+    })
     return
   }
 

@@ -13,13 +13,51 @@ interface DeviceInfo {
   enabled: boolean
 }
 
-export async function getActiveDevices(): Promise<DeviceInfo[]> {
+export interface DeviceDetails {
+  _id: string
+  enabled: boolean
+  lastHeartbeat?: string
+  heartbeatEnabled?: boolean
+  heartbeatIntervalMinutes?: number
+  brand?: string
+  model?: string
+  name?: string
+  batteryInfo?: {
+    percentage?: number
+    isCharging?: boolean
+    lastUpdated?: string
+  }
+  networkInfo?: {
+    networkType?: string
+    lastUpdated?: string
+  }
+  deviceUptimeInfo?: {
+    uptimeMillis?: number
+    lastUpdated?: string
+  }
+  appVersionName?: string
+  appVersionCode?: number
+  simInfo?: {
+    sims?: Array<{ carrierName?: string }>
+    lastUpdated?: string
+  }
+  sentSMSCount?: number
+  receivedSMSCount?: number
+  updatedAt?: string
+}
+
+export async function getDevices(): Promise<DeviceDetails[]> {
   const res = await fetch(`${TEXTBEE_API_URL}/gateway/devices`, {
     headers: { 'x-api-key': TEXTBEE_API_KEY },
   })
   if (!res.ok) return []
-  const json = await res.json() as { data?: DeviceInfo[] }
-  return (json.data || []).filter((d: DeviceInfo) => d.enabled)
+  const json = await res.json() as { data?: DeviceDetails[] }
+  return json.data || []
+}
+
+export async function getActiveDevices(): Promise<DeviceInfo[]> {
+  const all = await getDevices()
+  return all.filter((d: DeviceDetails) => d.enabled)
 }
 
 export async function sendSMS(deviceId: string, to: string, message: string): Promise<SendSMSResult> {

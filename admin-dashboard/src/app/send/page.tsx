@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Device } from '@/lib/textbee'
+import type { Device, DeviceHealthEntry } from '@/lib/textbee'
+import { isDeviceOnline } from '@/lib/textbee'
 
 type MessageType = 'transactional' | 'marketing'
 
 export default function SendSmsPage() {
   const router = useRouter()
   const [devices, setDevices] = useState<Device[]>([])
+  const [deviceHealth, setDeviceHealth] = useState<Map<string, DeviceHealthEntry>>(new Map())
   const [deviceId, setDeviceId] = useState('')
   const [recipient, setRecipient] = useState('')
   const [message, setMessage] = useState('')
@@ -20,14 +22,17 @@ export default function SendSmsPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    fetch('/api/textbee/devices')
-      .then((r) => r.json())
-      .then((j) => {
-        if (j.error) throw new Error(j.error)
-        setDevices(j.data)
-        if (j.data.length > 0) setDeviceId(j.data[0]._id)
-      })
-      .catch((e) => setError(e.message))
+    Promise.all([
+      fetch('/api/textbee/devices').then((r) => r.json()),
+      fetch('/api/gateway/device-health').then((r) => r.json()).catch(() => ({ data: [] })),
+    ]).then(([dj, hj]) => {
+      if (dj.error) throw new Error(dj.error)
+      setDevices(dj.data)
+      if (dj.data.length > 0) setDeviceId(dj.data[0]._id)
+      if (Array.isArray(hj.data)) {
+        setDeviceHealth(new Map(hj.data.map((h: DeviceHealthEntry) => [h.id, h])))
+      }
+    }).catch((e) => setError(e.message))
   }, [])
 
   const effectiveMessage = complianceFooter
@@ -81,6 +86,10 @@ export default function SendSmsPage() {
   const devName = (d: Device) =>
     d.name || `${d.brand || ''} ${d.model || ''}`.trim() || d._id
 
+  const selectedDevice = devices.find((d) => d._id === deviceId)
+  const selectedHealth = deviceHealth.get(deviceId)
+  const deviceOnline = selectedDevice ? isDeviceOnline(selectedDevice) : false
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-4">Send SMS</h1>
@@ -98,6 +107,22 @@ export default function SendSmsPage() {
               </option>
             ))}
           </select>
+          {selectedDevice && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`w-2 h-2 rounded-full ${deviceOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className={`text-xs ${deviceOnline ? 'text-green-700' : 'text-red-600'}`}>
+                {deviceOnline ? 'Online' : 'OFFLINE'}
+              </span>
+              {selectedHealth?.batteryPercentage !== null && selectedHealth?.batteryPercentage !== undefined && (
+                <span className="text-xs text-gray-400">
+                  &middot; batt: {selectedHealth.batteryPercentage}%{selectedHealth.batteryCharging ? '⚡' : ''}
+                </span>
+              )}
+              {selectedHealth?.networkType && (
+                <span className="text-xs text-gray-400">&middot; {selectedHealth.networkType}</span>
+              )}
+            </div>
+          )}
         </div>
 
         <div>

@@ -1,4 +1,4 @@
-import { sendSms, checkSuppressed } from '@/lib/textbee'
+import { sendSms, checkSuppressed, checkDeviceOnline } from '@/lib/textbee'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(
@@ -12,6 +12,16 @@ export async function POST(
       return NextResponse.json(
         { error: 'message and recipients (non-empty array) are required' },
         { status: 400 },
+      )
+    }
+
+    // Check device is online before dispatching
+    const deviceStatus = await checkDeviceOnline(params.id)
+    if (deviceStatus.onlineState !== 'online') {
+      const lastSeen = deviceStatus.lastSeenAgo || 'unknown'
+      return NextResponse.json(
+        { error: `Device is ${deviceStatus.onlineState} (last seen ${lastSeen}). Cannot send messages to an offline device. Open the TextBee Gateway app on the phone to reconnect.` },
+        { status: 503 },
       )
     }
 

@@ -81,6 +81,10 @@ export interface Device {
   receiveSMSEnabled?: boolean
   smsSendDelaySeconds?: number
   lastHeartbeat?: string
+  batteryInfo?: { percentage?: number; isCharging?: boolean; lastUpdated?: string }
+  networkInfo?: { networkType?: string; lastUpdated?: string }
+  deviceUptimeInfo?: { uptimeMillis?: number; lastUpdated?: string }
+  simInfo?: { sims?: Array<{ carrierName?: string }>; lastUpdated?: string }
   createdAt: string
   updatedAt: string
 }
@@ -283,6 +287,59 @@ export async function deleteTemplate(id: string): Promise<void> {
 }
 
 // ── Bulk send ──────────────────────────────────────────────────────────────────────────
+
+// ── Device health ──────────────────────────────────────────────────────────────────
+
+export interface DeviceHealthEntry {
+  id: string
+  name: string
+  enabled: boolean
+  onlineState: 'online' | 'offline' | 'never'
+  lastHeartbeat: string | null
+  lastSeenAgo: string | null
+  heartbeatIntervalMinutes: number | null
+  batteryPercentage: number | null
+  batteryCharging: boolean | null
+  networkType: string | null
+  uptimeSeconds: number | null
+  appVersionName: string | null
+  simCarrier: string | null
+  lastStateChange: string | null
+  lastAlertedAt: string | null
+  sentSMSCount: number | undefined
+  receivedSMSCount: number | undefined
+}
+
+export interface HeartbeatLogEntry {
+  deviceId: string
+  timestamp: string
+  batteryPercentage: number | null
+  batteryCharging: boolean | null
+  networkType: string | null
+  uptimeSeconds: number | null
+  appVersion: string | null
+  simCarrier: string | null
+}
+
+export async function fetchDeviceHealth(): Promise<DeviceHealthEntry[]> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/device-health`, { headers: gatewayHeaders(), next: { revalidate: 5 } })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Failed to fetch device health: ${res.status}`)
+  const json = await res.json()
+  return json.data as DeviceHealthEntry[]
+}
+
+export async function fetchHeartbeatHistory(deviceId: string, limit = 50): Promise<HeartbeatLogEntry[]> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/heartbeat-history/${deviceId}?limit=${limit}`, { headers: gatewayHeaders() })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Failed to fetch heartbeat history: ${res.status}`)
+  const json = await res.json()
+  return json.data as HeartbeatLogEntry[]
+}
+
+export async function checkDeviceOnline(deviceId: string): Promise<{ onlineState: string; lastHeartbeat: string | null; lastSeenAgo: string | null; batteryPercentage: number | null }> {
+  const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/check-device-online`, { method: 'POST', headers: gatewayHeaders(), body: JSON.stringify({ deviceId }) })
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Check device online failed: ${res.status}`)
+  return res.json()
+}
 
 export interface BulkSendResult {
   results: { phoneNumber: string; message: string; status: string; error?: string }[]

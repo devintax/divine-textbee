@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import type { Device, Template, ScheduledSendEntry } from '@/lib/textbee'
+import type { Device, Template, ScheduledSendEntry, DeviceHealthEntry } from '@/lib/textbee'
+import { isDeviceOnline } from '@/lib/textbee'
 
 export default function ScheduledSendsPage() {
   const [items, setItems] = useState<ScheduledSendEntry[]>([])
   const [devices, setDevices] = useState<Device[]>([])
   const [templates, setTemplates] = useState<Template[]>([])
+  const [deviceHealth, setDeviceHealth] = useState<Map<string, DeviceHealthEntry>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deviceId, setDeviceId] = useState('')
@@ -19,15 +21,17 @@ export default function ScheduledSendsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [s, d, t] = await Promise.all([
+      const [s, d, t, h] = await Promise.all([
         fetch('/api/gateway/scheduled-sends').then((r) => r.json()),
         fetch('/api/textbee/devices').then((r) => r.json()),
         fetch('/api/gateway/templates').then((r) => r.json()),
+        fetch('/api/gateway/device-health').then((r) => r.json()).catch(() => ({ data: [] })),
       ])
       if (s.error) throw new Error(s.error)
       setItems(s.data)
       if (!d.error) { setDevices(d.data); if (d.data.length > 0) setDeviceId(d.data[0]._id) }
       if (!t.error) setTemplates(t.data)
+      if (Array.isArray(h.data)) setDeviceHealth(new Map(h.data.map((e: DeviceHealthEntry) => [e.id, e])))
     } catch (e: any) { setError(e.message) }
     finally { setLoading(false) }
   }, [])
@@ -73,9 +77,34 @@ export default function ScheduledSendsPage() {
           <div>
             <label className="block text-xs font-medium mb-1">Device</label>
             <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm">
-              {devices.map((d) => (<option key={d._id} value={d._id}>{d.name || `${d.brand || ''} ${d.model || ''}`.trim() || d._id}</option>))}
+              {devices.map((d) => {
+                const online = isDeviceOnline(d)
+                return (<option key={d._id} value={d._id}>{d.name || `${d.brand || ''} ${d.model || ''}`.trim() || d._id} — {online ? 'Online' : 'OFFLINE'}</option>)
+              })}
             </select>
+            {(() => {
+              const dev = devices.find((d) => d._id === deviceId)
+              if (!dev) return null
+              const online = isDeviceOnline(dev)
+              const h = deviceHealth.get(deviceId)
+              return (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`w-2 h-2 rounded-full ${online ? 'bg-green-500' : 'bg-red-500'}`} />
+                  <span className={`text-xs ${online ? 'text-green-700' : 'text-red-600'}`}>
+                    {online ? 'Online' : 'OFFLINE'}
+                  </span>
+                  {h?.batteryPercentage !== null && h?.batteryPercentage !== undefined && (
+                    <span className="text-xs text-gray-400">batt: {h.batteryPercentage}%{h.batteryCharging ? '⚡' : ''}</span>
+                  )}
+                </div>
+              )
+            })()}
           </div>
+          {devices.find((d) => d._id === deviceId) && !isDeviceOnline(devices.find((d) => d._id === deviceId)!) && (
+            <div className="col-span-2 bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">
+              Device is currently OFFLINE. Scheduled send will be blocked at send time if the device is still offline. Open the TextBee Gateway app on the phone to reconnect.
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium mb-1">Recurrence</label>
             <select value={recurrence} onChange={(e) => setRecurrence(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm">

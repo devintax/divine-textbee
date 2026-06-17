@@ -144,6 +144,19 @@ services:
       - TEXTBEE_API_KEY=${TEXTBEE_API_KEY}
       - GATEWAY_ADMIN_TOKEN=${GATEWAY_ADMIN_TOKEN}
       - BULK_MAX_RECIPIENTS=${BULK_MAX_RECIPIENTS:-50}
+      - BULK_SEND_DELAY=${BULK_SEND_DELAY:-3}
+      - SCHEDULER_INTERVAL=${SCHEDULER_INTERVAL:-30000}
+      - HEALTH_CHECK_INTERVAL=${HEALTH_CHECK_INTERVAL:-60000}
+      - OFFLINE_THRESHOLD_MULTIPLIER=${OFFLINE_THRESHOLD_MULTIPLIER:-2}
+      - MAIL_HOST=${MAIL_HOST}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USER=${MAIL_USER}
+      - MAIL_PASS=${MAIL_PASS}
+      - MAIL_FROM=${MAIL_FROM}
+      - ALERT_EMAIL=${ALERT_EMAIL}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+    volumes:
+      - ./logs/gateway:/app/logs
     depends_on:
       textbee-db:
         condition: service_healthy

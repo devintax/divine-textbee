@@ -4,7 +4,9 @@ import { Usage } from '../models/Usage'
 import { Suppression } from '../models/Suppression'
 import { Template } from '../models/Template'
 import { ScheduledSend } from '../models/ScheduledSend'
-import { getActiveDevices, sendSMS } from '../lib/textbee'
+import { HeartbeatLog } from '../models/HeartbeatLog'
+import { AlertState } from '../models/AlertState'
+import { getDevices, getActiveDevices, sendSMS } from '../lib/textbee'
 import { generateKey, hashKey } from '../lib/hash'
 
 const router = Router()
@@ -272,5 +274,99 @@ router.delete('/scheduled-sends/:id', async (req: Request, res: Response) => {
   if (!item) { res.status(404).json({ error: 'Scheduled send not found' }); return }
   res.json({ success: true, status: item.status })
 })
+
+// ── Device health ────────────────────────────────────────────────────────────────────
+
+router.get('/device-health', async (_req: Request, res: Response) => {
+  try {
+    const devices = await getDevices()
+    const alerts = await AlertState.find().lean()
+    const alertMap = new Map(alerts.map((a) => [a.deviceId, a]))
+
+    const result = await Promise.all(devices.map(async (d) => {
+      const alert = alertMap.get(d._id)
+      const lastHb = d.lastHeartbeat ? new Date(d.lastHeartbeat).getTime() : 0
+      const interval = (d.heartbeatIntervalMinutes || 30) * 60 * 1000
+      const now = Date.now()
+      const isFresh = lastHb > 0 && (now - lastHb) < interval * 2
+      const onlineState = isFresh ? 'online' : (lastHb === 0 ? 'never' : 'offline')
+
+      return {
+        id: d._id,
+        name: d.name || `${d.brand || ''} ${d.model || ''}`.trim() || d._id,
+        enabled: d.enabled,
+        onlineState,
+        lastHeartbeat: d.lastHeartbeat,
+        lastSeenAgo: lastHb ? formatAgo(now - lastHb) : null,
+        heartbeatIntervalMinutes: d.heartbeatIntervalMinutes,
+        batteryPercentage: d.batteryInfo?.percentage ?? null,
+        batteryCharging: d.batteryInfo?.isCharging ?? null,
+        networkType: d.networkInfo?.networkType ?? null,
+        uptimeSeconds: d.deviceUptimeInfo ? Math.round((d.deviceUptimeInfo.uptimeMillis || 0) / 1000) : null,
+        appVersionName: d.appVersionName,
+        simCarrier: d.simInfo?.sims?.[0]?.carrierName ?? null,
+        lastStateChange: alert?.stateChangedAt || null,
+        lastAlertedAt: alert?.lastAlertedAt || null,
+        sentSMSCount: d.sentSMSCount,
+        receivedSMSCount: d.receivedSMSCount,
+      }
+    }))
+
+    res.json({ data: result })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/heartbeat-history/:deviceId', async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200)
+    const logs = await HeartbeatLog.find({ deviceId: req.params.deviceId })
+      .sort({ timestamp: -1 }).limit(limit).lean()
+    res.json({ data: logs })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.post('/check-device-online', async (req: Request, res: Response) => {
+  try {
+    const { deviceId } = req.body
+    if (!deviceId) { res.status(400).json({ error: 'deviceId required' }); return }
+
+    const devices = await getDevices()
+    const dev = devices.find((d) => d._id === deviceId)
+    if (!dev) { res.status(404).json({ error: 'Device not found' }); return }
+
+    const lastHb = dev.lastHeartbeat ? new Date(dev.lastHeartbeat).getTime() : 0
+    const interval = (dev.heartbeatIntervalMinutes || 30) * 60 * 1000
+    const now = Date.now()
+    const isFresh = lastHb > 0 && (now - lastHb) < interval * 2
+    const onlineState = isFresh ? 'online' : (lastHb === 0 ? 'never' : 'offline')
+
+    res.json({
+      deviceId: dev._id,
+      onlineState,
+      lastHeartbeat: dev.lastHeartbeat,
+      lastSeenAgo: lastHb ? formatAgo(now - lastHb) : null,
+      batteryPercentage: dev.batteryInfo?.percentage ?? null,
+      batteryCharging: dev.batteryInfo?.isCharging ?? null,
+      networkType: dev.networkInfo?.networkType ?? null,
+    })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+function formatAgo(ms: number): string {
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}min ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ${min % 60}min ago`
+  const days = Math.floor(hr / 24)
+  return `${days}d ${hr % 24}h ago`
+}
 
 export default router

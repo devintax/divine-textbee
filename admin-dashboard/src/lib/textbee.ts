@@ -64,6 +64,9 @@ export interface Device {
   user: string
   enabled: boolean
   fcmToken?: string
+  fcmTokenUpdatedAt?: string
+  fcmTokenInvalidatedAt?: string
+  fcmTokenInvalidReason?: string
   brand?: string
   manufacturer?: string
   model?: string
@@ -74,6 +77,11 @@ export interface Device {
   osVersion?: string
   appVersionName?: string
   appVersionCode?: number
+  appVersionInfo?: {
+    versionName?: string
+    versionCode?: number
+    lastUpdated?: string
+  }
   sentSMSCount?: number
   receivedSMSCount?: number
   heartbeatEnabled?: boolean
@@ -84,7 +92,37 @@ export interface Device {
   batteryInfo?: { percentage?: number; isCharging?: boolean; lastUpdated?: string }
   networkInfo?: { networkType?: string; lastUpdated?: string }
   deviceUptimeInfo?: { uptimeMillis?: number; lastUpdated?: string }
-  simInfo?: { sims?: Array<{ carrierName?: string }>; lastUpdated?: string }
+  memoryInfo?: {
+    freeBytes?: number
+    totalBytes?: number
+    maxBytes?: number
+    lastUpdated?: string
+  }
+  storageInfo?: {
+    availableBytes?: number
+    totalBytes?: number
+    lastUpdated?: string
+  }
+  systemInfo?: {
+    timezone?: string
+    locale?: string
+    lastUpdated?: string
+  }
+  simInfo?: {
+    sims?: Array<{
+      subscriptionId?: number
+      iccId?: string
+      cardId?: number
+      carrierName?: string
+      displayName?: string
+      simSlotIndex?: number
+      mcc?: string
+      mnc?: string
+      countryIso?: string
+      subscriptionType?: string
+    }>
+    lastUpdated?: string
+  }
   createdAt: string
   updatedAt: string
 }

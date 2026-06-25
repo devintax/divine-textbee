@@ -173,7 +173,13 @@ export default function DevicesPage() {
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                       {d.brand && `${d.brand} ${d.model || ''}`.trim()}
+                      {d.manufacturer && ` · ${d.manufacturer}`}
                       {d.os && ` · ${d.os} ${d.osVersion || ''}`}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5 font-mono">
+                      ID: {d._id.slice(0, 16)}...
+                      {d.serial ? ` · S/N: ${d.serial}` : ''}
+                      {d.buildId ? ` · Build: ${d.buildId.slice(0, 12)}...` : ''}
                     </div>
                     {!awaiting && (
                       <div className="text-xs mt-1.5 space-y-0.5">
@@ -191,7 +197,7 @@ export default function DevicesPage() {
                     {awaiting && (
                       <div className="text-xs text-yellow-600 mt-1">Registered — waiting for first heartbeat</div>
                     )}
-                    {/* Battery, network, uptime */}
+                    {/* Battery, network, uptime, app */}
                     <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-400">
                       {battery !== null && battery !== undefined && (
                         <span className={batteryColor(battery)}>
@@ -205,7 +211,11 @@ export default function DevicesPage() {
                       {d.heartbeatIntervalMinutes && (
                         <span>&#128467; Every {d.heartbeatIntervalMinutes}min</span>
                       )}
+                      {d.appVersionName && <span>&#128241; {d.appVersionName}{d.appVersionCode ? ` (${d.appVersionCode})` : ''}</span>}
                     </div>
+                    {health?.simCarrier && (
+                      <div className="text-xs text-gray-400 mt-0.5">SIM: {health.simCarrier}</div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 ml-4">

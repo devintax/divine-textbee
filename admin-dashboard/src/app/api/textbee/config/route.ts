@@ -8,12 +8,17 @@ export async function GET() {
   }
 
   const url = process.env.TEXTBEE_API_URL || '(not set)'
-  const keySet = process.env.TEXTBEE_API_KEY ? true : false
+  const key = process.env.TEXTBEE_API_KEY || ''
+  const gatewayUrl = process.env.GATEWAY_ADMIN_URL || '(not set)'
+  const gatewayTokenSet = process.env.GATEWAY_ADMIN_TOKEN ? true : false
 
   return NextResponse.json({
     data: {
       url,
-      keySet,
+      keyPrefix: key ? key.slice(0, 8) + '...' : '',
+      keySet: !!key,
+      gatewayUrl,
+      gatewayTokenSet,
     },
   })
 }

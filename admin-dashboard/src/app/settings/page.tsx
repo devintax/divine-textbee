@@ -9,6 +9,7 @@ export default function SettingsPage() {
     keyPrefix: string
     keySet: boolean
     gatewayUrl: string
+    gatewayTokenPrefix: string
     gatewayTokenSet: boolean
   } | null>(null)
   const [error, setError] = useState('')
@@ -16,6 +17,9 @@ export default function SettingsPage() {
   const [newKey, setNewKey] = useState('')
   const [genError, setGenError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [genToken, setGenToken] = useState(false)
+  const [newToken, setNewToken] = useState('')
+  const [tokenCopied, setTokenCopied] = useState(false)
 
   useEffect(() => {
     fetch('/api/textbee/config')
@@ -45,6 +49,20 @@ export default function SettingsPage() {
     navigator.clipboard.writeText(newKey).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {})
+  }
+
+  function generateGatewayToken() {
+    const buf = new Uint8Array(32)
+    crypto.getRandomValues(buf)
+    const hex = Array.from(buf).map((b) => b.toString(16).padStart(2, '0')).join('')
+    setNewToken(hex)
+  }
+
+  function copyToken() {
+    navigator.clipboard.writeText(newToken).then(() => {
+      setTokenCopied(true)
+      setTimeout(() => setTokenCopied(false), 2000)
     }).catch(() => {})
   }
 
@@ -150,6 +168,51 @@ export default function SettingsPage() {
           </button>
         </div>
 
+        {/* Generate New Gateway Token */}
+        <div className="bg-white rounded-xl shadow p-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 mb-3">
+            Generate Gateway Admin Token
+          </h2>
+          <p className="text-xs text-gray-500 mb-3">
+            Create a new admin token for the SMS Gateway service. The current token
+            (set via the <code className="font-mono text-[10px] bg-gray-100 px-1">GATEWAY_ADMIN_TOKEN</code> env var)
+            is used to authenticate admin API calls between the dashboard and gateway.
+            A new token is generated in your browser — you must update the env var on both
+            the admin-dashboard and textbee-gateway services, then restart both containers.
+          </p>
+
+          {newToken && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+              <div className="text-xs font-bold text-amber-800 mb-1">
+                New Gateway Token — Save this now
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs font-mono bg-white border rounded px-2 py-1 select-all break-all">
+                  {newToken}
+                </code>
+                <button
+                  onClick={copyToken}
+                  className="shrink-0 text-xs bg-amber-200 text-amber-800 px-2 py-1 rounded hover:bg-amber-300"
+                >
+                  {tokenCopied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <div className="text-xs text-amber-700 mt-2">
+                Update <code className="font-mono bg-amber-100 px-0.5">GATEWAY_ADMIN_TOKEN</code> in the
+                environment variables for both <strong>admin-dashboard</strong> and{' '}
+                <strong>textbee-gateway</strong>, then restart both containers.
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={generateGatewayToken}
+            className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+          >
+            Generate New Token
+          </button>
+        </div>
+
         {/* Connection test */}
         <div className="bg-white rounded-xl shadow p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 mb-3">
@@ -158,13 +221,13 @@ export default function SettingsPage() {
           <div className="flex items-center gap-2 text-sm">
             <span className={`w-2 h-2 rounded-full ${config?.keySet ? 'bg-green-500' : 'bg-red-500'}`} />
             <span>
-              TextBee API: {config?.keySet ? 'Key configured' : 'No key configured'}
+              TextBee API: {config?.keySet ? `Key configured (${config?.keyPrefix})` : 'No key configured'}
             </span>
           </div>
           <div className="flex items-center gap-2 text-sm mt-1">
             <span className={`w-2 h-2 rounded-full ${config?.gatewayTokenSet ? 'bg-green-500' : 'bg-red-500'}`} />
             <span>
-              Gateway: {config?.gatewayTokenSet ? 'Token configured' : 'No token configured'}
+              Gateway: {config?.gatewayTokenSet ? `Token configured (${config?.gatewayTokenPrefix})` : 'No token configured'}
             </span>
           </div>
         </div>

@@ -9,8 +9,8 @@ export async function GET() {
 
   const url = process.env.TEXTBEE_API_URL || '(not set)'
   const key = process.env.TEXTBEE_API_KEY || ''
+  const token = process.env.GATEWAY_ADMIN_TOKEN || ''
   const gatewayUrl = process.env.GATEWAY_ADMIN_URL || '(not set)'
-  const gatewayTokenSet = process.env.GATEWAY_ADMIN_TOKEN ? true : false
 
   return NextResponse.json({
     data: {
@@ -18,7 +18,8 @@ export async function GET() {
       keyPrefix: key ? key.slice(0, 8) + '...' : '',
       keySet: !!key,
       gatewayUrl,
-      gatewayTokenSet,
+      gatewayTokenPrefix: token ? token.slice(0, 8) + '...' : '',
+      gatewayTokenSet: !!token,
     },
   })
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import type { Device, DeviceHealthEntry } from '@/lib/textbee'
-import { isDeviceOnline } from '@/lib/textbee'
+import { isDeviceOnline, wakeDevice } from '@/lib/textbee'
 
 function ago(ms: number): string {
   const sec = Math.floor(ms / 1000)
@@ -58,6 +58,20 @@ export default function DevicesPage() {
     const id = setInterval(loadData, 10000)
     return () => clearInterval(id)
   }, [loadData])
+
+  // Wake offline devices on load and periodically
+  useEffect(() => {
+    if (loading) return
+    const offlineDevices = devices.filter((d) => {
+      if (!d.lastHeartbeat) return true
+      const interval = (d.heartbeatIntervalMinutes || 30) * 60 * 1000
+      const elapsed = Date.now() - new Date(d.lastHeartbeat).getTime()
+      return elapsed > interval * 2
+    })
+    for (const d of offlineDevices) {
+      wakeDevice(d._id).catch(() => {})
+    }
+  }, [devices, loading])
 
   async function handleRegister() {
     setRegisterState('creating')

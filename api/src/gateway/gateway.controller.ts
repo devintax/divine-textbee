@@ -198,4 +198,12 @@ export class GatewayController {
     const data = await this.gatewayService.getSmsBatchById(smsBatchId);
     return { data };
   }
+
+  @ApiOperation({ summary: 'Send FCM push to wake a device and trigger a heartbeat' })
+  @UseGuards(AuthGuard, CanModifyDevice)
+  @Post('/devices/:id/wake')
+  async wakeDevice(@Param('id') deviceId: string) {
+    const data = await this.gatewayService.wakeDevice(deviceId);
+    return { data };
+  }
 }

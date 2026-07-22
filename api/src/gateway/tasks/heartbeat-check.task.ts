@@ -58,16 +58,30 @@ export class HeartbeatCheckTask {
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000)
 
     try {
-      // Find devices with stale heartbeats
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+      // Find devices with stale heartbeats.
+      // Include devices with valid FCM tokens OR tokens invalidated >24h ago
+      // (retry allows recovery if the app re-registered a token).
+      // Use $and to combine the stale-heartbeat and token-validity OR groups.
       const devices = await this.deviceModel.find({
         heartbeatEnabled: true,
         enabled: true,
-        $or: [
-          { lastHeartbeat: null },
-          { lastHeartbeat: { $lt: thirtyMinutesAgo } },
-        ],
         fcmToken: { $exists: true, $ne: null },
-        fcmTokenInvalidatedAt: { $exists: false },
+        $and: [
+          {
+            $or: [
+              { lastHeartbeat: null },
+              { lastHeartbeat: { $lt: thirtyMinutesAgo } },
+            ],
+          },
+          {
+            $or: [
+              { fcmTokenInvalidatedAt: { $exists: false } },
+              { fcmTokenInvalidatedAt: { $lt: twentyFourHoursAgo } },
+            ],
+          },
+        ],
       })
 
       if (devices.length === 0) {
@@ -107,6 +121,14 @@ export class HeartbeatCheckTask {
         return
       }
 
+      // Track which devices had invalidated tokens before sending (for recovery detection)
+      const wasInvalidatedMap = new Map<string, boolean>()
+      for (const device of devices) {
+        if (device.fcmTokenInvalidatedAt) {
+          wasInvalidatedMap.set(device._id.toString(), true)
+        }
+      }
+
       // Send FCM messages in batches (FCM allows max 500 per sendEach call)
       let totalSuccessCount = 0
       let totalFailureCount = 0
@@ -119,50 +141,72 @@ export class HeartbeatCheckTask {
         totalSuccessCount += response.successCount
         totalFailureCount += response.failureCount
 
-        if (response.failureCount > 0) {
-          const invalidationUpdates: Array<{
-            deviceId: string
-            reason: string
-          }> = []
+        const invalidationUpdates: Array<{
+          deviceId: string
+          reason: string
+        }> = []
+        const recoveryUpdates: string[] = []
 
-          response.responses.forEach((resp, index) => {
-            if (!resp.success) {
-              const errorMessage = resp.error?.message || 'Unknown error'
-              const errorCode = resp.error?.code || 'UNKNOWN_ERROR'
+        response.responses.forEach((resp, index) => {
+          const deviceId = batchDeviceIds[index]
+          if (!resp.success) {
+            const errorMessage = resp.error?.message || 'Unknown error'
+            const errorCode = resp.error?.code || 'UNKNOWN_ERROR'
 
-              this.logger.error(
-                `Failed to send heartbeat check to device ${batchDeviceIds[index]}: ${errorMessage}`,
-              )
+            this.logger.error(
+              `Failed to send heartbeat check to device ${deviceId}: ${errorMessage}`,
+            )
 
-              if (isPermanentFcmTokenError(resp.error)) {
-                invalidationUpdates.push({
-                  deviceId: batchDeviceIds[index],
-                  reason: `${errorCode}: ${errorMessage}`,
-                })
-              }
+            if (isPermanentFcmTokenError(resp.error)) {
+              invalidationUpdates.push({
+                deviceId,
+                reason: `${errorCode}: ${errorMessage}`,
+              })
             }
-          })
+          } else if (wasInvalidatedMap.get(deviceId)) {
+            recoveryUpdates.push(deviceId)
+          }
+        })
 
-          if (invalidationUpdates.length > 0) {
-            const invalidatedAt = new Date()
-            await this.deviceModel.bulkWrite(
-              invalidationUpdates.map(({ deviceId, reason }) => ({
-                updateOne: {
-                  filter: { _id: new Types.ObjectId(deviceId) },
-                  update: {
-                    $set: {
-                      fcmTokenInvalidatedAt: invalidatedAt,
-                      fcmTokenInvalidReason: reason,
-                    },
+        if (invalidationUpdates.length > 0) {
+          const invalidatedAt = new Date()
+          await this.deviceModel.bulkWrite(
+            invalidationUpdates.map(({ deviceId, reason }) => ({
+              updateOne: {
+                filter: { _id: new Types.ObjectId(deviceId) },
+                update: {
+                  $set: {
+                    fcmTokenInvalidatedAt: invalidatedAt,
+                    fcmTokenInvalidReason: reason,
                   },
                 },
-              })),
-            )
+              },
+            })),
+          )
 
-            this.logger.warn(
-              `Marked ${invalidationUpdates.length} device(s) as FCM-token-invalid; heartbeat retries paused until token update`,
-            )
-          }
+          this.logger.warn(
+            `Marked ${invalidationUpdates.length} device(s) as FCM-token-invalid; heartbeat retries paused until token update`,
+          )
+        }
+
+        if (recoveryUpdates.length > 0) {
+          await this.deviceModel.bulkWrite(
+            recoveryUpdates.map((deviceId) => ({
+              updateOne: {
+                filter: { _id: new Types.ObjectId(deviceId) },
+                update: {
+                  $unset: {
+                    fcmTokenInvalidatedAt: '',
+                    fcmTokenInvalidReason: '',
+                  },
+                },
+              },
+            })),
+          )
+
+          this.logger.log(
+            `Cleared FCM token invalidation for ${recoveryUpdates.length} device(s) — token is valid again`,
+          )
         }
       }
 

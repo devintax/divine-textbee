@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { Device, SMSRecord, PaginationMeta, DeviceHealthEntry, HeartbeatLogEntry } from '@/lib/textbee'
-import { isDeviceOnline } from '@/lib/textbee'
+import { isDeviceOnline, wakeDevice } from '@/lib/textbee'
 
 function ago(ms: number): string {
   const sec = Math.floor(ms / 1000)
@@ -81,6 +81,21 @@ export default function DeviceDetailPage({ params }: { params: { id: string } })
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'sent' | 'received'>('all')
   const [showHbLog, setShowHbLog] = useState(false)
+  const [waking, setWaking] = useState(false)
+  const [wakeResult, setWakeResult] = useState('')
+
+  async function handleWake() {
+    setWaking(true)
+    setWakeResult('')
+    try {
+      const result = await wakeDevice(params.id)
+      setWakeResult(result.fcmSent ? 'Wake signal sent' : result.message)
+    } catch (e: any) {
+      setWakeResult(e.message)
+    } finally {
+      setWaking(false)
+    }
+  }
 
   useEffect(() => {
     setLoading(true)
@@ -155,7 +170,19 @@ export default function DeviceDetailPage({ params }: { params: { id: string } })
       )}
       {!awaiting && !online && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-800">
-          <strong>Device is OFFLINE.</strong> Last seen {ago(staleFor)} ago ({new Date(device.lastHeartbeat!).toLocaleString()}). No messages can be sent until the app is reopened.
+          <div className="flex items-start justify-between">
+            <div>
+              <strong>Device is OFFLINE.</strong> Last seen {ago(staleFor)} ago ({new Date(device.lastHeartbeat!).toLocaleString()}). No messages can be sent until the app is reopened.
+            </div>
+            <button
+              onClick={handleWake}
+              disabled={waking}
+              className="shrink-0 ml-3 text-xs bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 disabled:opacity-50"
+            >
+              {waking ? 'Waking...' : 'Wake Device'}
+            </button>
+          </div>
+          {wakeResult && <p className="text-xs mt-1 text-red-600">{wakeResult}</p>}
         </div>
       )}
       {!awaiting && online && (

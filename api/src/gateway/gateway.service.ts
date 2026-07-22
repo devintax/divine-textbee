@@ -1340,4 +1340,45 @@ const updatedSms = await this.smsModel.findByIdAndUpdate(
       name: updatedDevice?.name,
     }
   }
+
+  async wakeDevice(deviceId: string): Promise<{
+    success: boolean
+    fcmSent: boolean
+    tokenPresent: boolean
+    tokenInvalidated: boolean
+    message: string
+  }> {
+    const device = await this.deviceModel.findById(deviceId)
+    if (!device) {
+      return { success: false, fcmSent: false, tokenPresent: false, tokenInvalidated: false, message: 'Device not found' }
+    }
+
+    if (!device.fcmToken) {
+      return { success: false, fcmSent: false, tokenPresent: false, tokenInvalidated: !!device.fcmTokenInvalidatedAt, message: 'Device has no FCM token. Open the app on the phone to register.' }
+    }
+
+    const fcmMessage: Message = {
+      data: { type: 'heartbeat_check' },
+      token: device.fcmToken,
+      android: { priority: 'high' },
+    }
+
+    try {
+      await firebaseAdmin.messaging().send(fcmMessage)
+
+      if (device.fcmTokenInvalidatedAt) {
+        await this.deviceModel.findByIdAndUpdate(deviceId, {
+          $set: {
+            fcmTokenInvalidatedAt: undefined,
+            fcmTokenInvalidReason: undefined,
+          },
+        })
+      }
+
+      return { success: true, fcmSent: true, tokenPresent: true, tokenInvalidated: false, message: 'Wake signal sent to device' }
+    } catch (err: any) {
+      const errCode = String(err.code || err.message || '')
+      return { success: true, fcmSent: false, tokenPresent: true, tokenInvalidated: !!device.fcmTokenInvalidatedAt, message: `FCM send failed: ${errCode}. The app may be killed or the FCM token may be expired. Open the app on the phone to re-register.` }
+    }
+  }
 }

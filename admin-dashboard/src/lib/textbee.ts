@@ -3,7 +3,7 @@ const TEXTBEE_API_KEY = process.env.TEXTBEE_API_KEY || ''
 const GATEWAY_ADMIN_URL = process.env.GATEWAY_ADMIN_URL || ''
 const GATEWAY_ADMIN_TOKEN = process.env.GATEWAY_ADMIN_TOKEN || ''
 
-async function fetchTextBee(path: string, options?: RequestInit & { raw?: boolean }) {
+export async function fetchTextBee(path: string, options?: RequestInit & { raw?: boolean }) {
   const url = `${TEXTBEE_API_URL}${path}`
   const res = await fetch(url, {
     ...options,
@@ -427,6 +427,13 @@ export async function createScheduledSend(deviceId: string, message: string, rec
 export async function cancelScheduledSend(id: string): Promise<void> {
   const res = await fetch(`${GATEWAY_ADMIN_URL}/admin/scheduled-sends/${id}`, { method: 'DELETE', headers: gatewayHeaders() })
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Cancel scheduled send failed: ${res.status}`)
+}
+
+export async function wakeDevice(deviceId: string): Promise<{ success: boolean; fcmSent: boolean; tokenPresent: boolean; tokenInvalidated: boolean; message: string }> {
+  const res = await fetch(`/api/textbee/devices/${deviceId}/wake`, { method: 'POST' })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error || json.data?.message || 'Wake failed')
+  return json.data
 }
 
 export async function checkSuppressed(phoneNumbers: string[]): Promise<string[]> {

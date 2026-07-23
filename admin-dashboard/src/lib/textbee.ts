@@ -231,12 +231,10 @@ export async function revokeApiKey(id: string): Promise<void> {
 // ── TextBee API keys (for device pairing) ─────────────────────────────────────────────────
 
 export async function generateTextBeeApiKey(): Promise<string> {
-  const result = await fetchTextBee('/auth/api-keys', {
-    method: 'POST',
-    body: JSON.stringify({}),
-  })
-  // Response is { data: "<uuid>" } where data is the string directly
-  return typeof result === 'string' ? result : result.apiKey || result
+  const res = await fetch('/api/textbee/generate-key', { method: 'POST' })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error || 'Failed to generate key')
+  return json.data
 }
 
 // ── Device management ──────────────────────────────────────────────────────────────────────

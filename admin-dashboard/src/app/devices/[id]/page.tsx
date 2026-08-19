@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import type { Device, SMSRecord, PaginationMeta, DeviceHealthEntry, HeartbeatLogEntry } from '@/lib/textbee'
 import { isDeviceOnline, wakeDevice } from '@/lib/textbee'
+import { displayText, errorText } from '@/lib/display'
 
 function ago(ms: number): string {
   const sec = Math.floor(ms / 1000)
@@ -89,9 +90,9 @@ export default function DeviceDetailPage({ params }: { params: { id: string } })
     setWakeResult('')
     try {
       const result = await wakeDevice(params.id)
-      setWakeResult(result.fcmSent ? 'Wake signal sent' : result.message)
+      setWakeResult(result.fcmSent ? 'Wake signal sent' : displayText(result.message, 'Wake request completed'))
     } catch (e: any) {
-      setWakeResult(e.message)
+      setWakeResult(errorText(e))
     } finally {
       setWaking(false)
     }
@@ -117,7 +118,7 @@ export default function DeviceDetailPage({ params }: { params: { id: string } })
           if (h) setHealth(h)
         }
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => setError(errorText(e)))
       .finally(() => setLoading(false))
   }, [params.id, page, filter])
 
@@ -308,7 +309,7 @@ export default function DeviceDetailPage({ params }: { params: { id: string } })
                 {hbLogs.map((h, i) => (
                   <div key={i} className="text-xs font-mono text-gray-600">
                     {new Date(h.timestamp).toLocaleString()} &mdash;
-                    batt:{h.batteryPercentage ?? '?'}%{h.batteryCharging ? '⚡' : ''}
+                    batt:{h.batteryPercentage ?? '?'}%{h.batteryCharging ? ' charging' : ''}
                     net:{h.networkType ?? '?'}
                     uptime:{h.uptimeSeconds ? ago(h.uptimeSeconds * 1000) : '?'}
                     {h.simCarrier ? ` sim:${h.simCarrier}` : ''}
@@ -341,16 +342,16 @@ export default function DeviceDetailPage({ params }: { params: { id: string } })
         {msgs.map((m) => (
           <div key={m._id} className="bg-white rounded-lg shadow p-3 text-sm">
             <div className="flex items-center justify-between">
-              <div className="font-medium truncate max-w-md">{m.message}</div>
+              <div className="font-medium truncate max-w-md">{displayText(m.message, '(empty message)')}</div>
               {statusBadge(m.status)}
             </div>
             <div className="text-xs text-gray-400 mt-1">
               {m.type === 'SENT' ? `To: ${m.recipient}` : `From: ${m.sender}`}
-              {' · '}
+              {' - '}
               {new Date(m.createdAt).toLocaleString()}
-              {m.sentAt && ` · Sent: ${new Date(m.sentAt).toLocaleString()}`}
-              {m.failedAt && ` · Failed: ${new Date(m.failedAt).toLocaleString()}`}
-              {m.errorMessage && ` · Error: ${m.errorMessage}`}
+              {m.sentAt && ` - Sent: ${new Date(m.sentAt).toLocaleString()}`}
+              {m.failedAt && ` - Failed: ${new Date(m.failedAt).toLocaleString()}`}
+              {displayText(m.errorMessage) && ` - Error: ${displayText(m.errorMessage)}`}
             </div>
           </div>
         ))}
@@ -366,3 +367,4 @@ export default function DeviceDetailPage({ params }: { params: { id: string } })
     </div>
   )
 }
+

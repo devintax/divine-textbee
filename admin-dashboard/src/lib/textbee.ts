@@ -234,6 +234,9 @@ export async function generateTextBeeApiKey(): Promise<string> {
   const res = await fetch('/api/textbee/generate-key', { method: 'POST' })
   const json = await res.json()
   if (!res.ok) throw new Error(json.error || 'Failed to generate key')
+  if (typeof json.data !== 'string' || json.data.length === 0) {
+    throw new Error('Generate key returned an invalid response')
+  }
   return json.data
 }
 

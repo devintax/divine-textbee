@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type { Device, SMSRecord } from '@/lib/textbee'
+import { displayText, errorText } from '@/lib/display'
 
 export default function HistoryPage() {
   const [devices, setDevices] = useState<Device[]>([])
@@ -23,7 +24,7 @@ export default function HistoryPage() {
           setDeviceId(j.data[0]._id)
         }
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => setError(errorText(e)))
   }, [])
 
   useEffect(() => {
@@ -37,7 +38,7 @@ export default function HistoryPage() {
         setTotalPages(j.meta.totalPages)
         setTotal(j.meta.total)
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => setError(errorText(e)))
       .finally(() => setLoading(false))
   }, [deviceId, page])
 
@@ -90,17 +91,17 @@ export default function HistoryPage() {
         {msgs.map((m) => (
           <div key={m._id} className="bg-white rounded-lg shadow p-3 text-sm">
             <div className="flex items-center justify-between">
-              <div className="font-medium truncate max-w-md">{m.message}</div>
+              <div className="font-medium truncate max-w-md">{displayText(m.message, '(empty message)')}</div>
               {statusBadge(m.status)}
             </div>
             <div className="text-xs text-gray-400 mt-1">
               {m.type === 'SENT' ? `To: ${m.recipient}` : `From: ${m.sender}`}
-              {' · '}
+              {' - '}
               {new Date(m.createdAt).toLocaleString()}
-              {m.sentAt && ` · Sent: ${new Date(m.sentAt).toLocaleString()}`}
-              {m.deliveredAt && ` · Delivered: ${new Date(m.deliveredAt).toLocaleString()}`}
-              {m.failedAt && ` · Failed: ${new Date(m.failedAt).toLocaleString()}`}
-              {m.errorMessage && ` · ${m.errorMessage}`}
+              {m.sentAt && ` - Sent: ${new Date(m.sentAt).toLocaleString()}`}
+              {m.deliveredAt && ` - Delivered: ${new Date(m.deliveredAt).toLocaleString()}`}
+              {m.failedAt && ` - Failed: ${new Date(m.failedAt).toLocaleString()}`}
+              {displayText(m.errorMessage) && ` - ${displayText(m.errorMessage)}`}
             </div>
           </div>
         ))}
@@ -130,3 +131,4 @@ export default function HistoryPage() {
     </div>
   )
 }
+
